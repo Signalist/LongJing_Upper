@@ -6,17 +6,14 @@
 
 bool currentFaultA = false;
 bool currentFaultB = false;
-bool currentFaultC = false;
 bool currentVonFault = false;
 
 bool latchFaultA = false;
 bool latchFaultB = false;
-bool latchFaultC = false;
 bool latchVonFault = false;
 
 uint64_t A_fault_time_ms = 0;
 uint64_t B_fault_time_ms = 0;
-uint64_t C_fault_time_ms = 0;
 uint64_t Von_fault_time_ms = 0;
 
 float Von_fault_value = 0.0f;
@@ -30,12 +27,12 @@ float readVonVoltage() {
 
 
 bool hasAnyFaultLatch() {
-  return latchFaultA || latchFaultB || latchFaultC || latchVonFault;
+  return latchFaultA || latchFaultB || latchVonFault;
 }
 
 
 bool hasAnyCurrentFault() {
-  return currentFaultA || currentFaultB || currentFaultC || currentVonFault;
+  return currentFaultA || currentFaultB || currentVonFault;
 }
 
 
@@ -54,9 +51,6 @@ String getFaultBriefText() {
     msg += "B";
   }
 
-  if (currentFaultC || latchFaultC) {
-    msg += "C";
-  }
 
   if (currentVonFault || latchVonFault) {
     msg += "VON";
@@ -75,8 +69,6 @@ String getAxisFaultBriefText(char axis) {
     if (currentFaultA || latchFaultA) return "A";
   } else if (axis == 'B') {
     if (currentFaultB || latchFaultB) return "B";
-  } else if (axis == 'C') {
-    if (currentFaultC || latchFaultC) return "C";
   }
 
   if (currentVonFault || latchVonFault) {
@@ -91,7 +83,6 @@ bool updateFaultLatch() {
 #if ENABLE_FAULT_CHECK
   currentFaultA = digitalRead(PIN_A_FAULT) == LOW;
   currentFaultB = digitalRead(PIN_B_FAULT) == LOW;
-  currentFaultC = digitalRead(PIN_C_FAULT) == LOW;
 
   float von = readVonVoltage();
   currentVonFault = (von < VON_MIN || von > VON_MAX);
@@ -108,10 +99,6 @@ bool updateFaultLatch() {
     B_fault_time_ms = nowMs;
   }
 
-  if (currentFaultC && !latchFaultC) {
-    latchFaultC = true;
-    C_fault_time_ms = nowMs;
-  }
 
   if (currentVonFault && !latchVonFault) {
     latchVonFault = true;
@@ -123,7 +110,6 @@ bool updateFaultLatch() {
 #else
   currentFaultA = false;
   currentFaultB = false;
-  currentFaultC = false;
   currentVonFault = false;
   systemProtected = false;
   return false;
@@ -142,7 +128,6 @@ String getFaultInfo() {
   } else {
     if (latchFaultA) msg += "A";
     if (latchFaultB) msg += "B";
-    if (latchFaultC) msg += "C";
     if (latchVonFault) msg += "VON";
   }
 
@@ -152,7 +137,6 @@ String getFaultInfo() {
   } else {
     if (currentFaultA) msg += "A";
     if (currentFaultB) msg += "B";
-    if (currentFaultC) msg += "C";
     if (currentVonFault) msg += "VON";
   }
 
@@ -165,8 +149,6 @@ String getFaultInfo() {
   msg += ", B_fault_time=";
   msg += msToTimestamp(B_fault_time_ms);
 
-  msg += ", C_fault_time=";
-  msg += msToTimestamp(C_fault_time_ms);
 
   msg += ", Von_fault_time=";
   msg += msToTimestamp(Von_fault_time_ms);
@@ -194,7 +176,6 @@ String clearFaultLatch() {
     } else {
       if (latchFaultA) msg += "A";
       if (latchFaultB) msg += "B";
-      if (latchFaultC) msg += "C";
       if (latchVonFault) msg += "VON";
     }
 
@@ -204,7 +185,6 @@ String clearFaultLatch() {
     } else {
       if (currentFaultA) msg += "A";
       if (currentFaultB) msg += "B";
-      if (currentFaultC) msg += "C";
       if (currentVonFault) msg += "VON";
     }
 
@@ -214,12 +194,10 @@ String clearFaultLatch() {
 
   latchFaultA = false;
   latchFaultB = false;
-  latchFaultC = false;
   latchVonFault = false;
 
   A_fault_time_ms = 0;
   B_fault_time_ms = 0;
-  C_fault_time_ms = 0;
   Von_fault_time_ms = 0;
 
   Von_fault_value = 0.0f;

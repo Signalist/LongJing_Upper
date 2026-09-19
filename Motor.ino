@@ -4,20 +4,16 @@
 // 电机对象定义
 // ============================================================
 
-BLDCDriver3PWM driverA(PIN_A_U, PIN_A_V, PIN_A_W);
-BLDCDriver3PWM driverB(PIN_B_U, PIN_B_V, PIN_B_W);
-BLDCDriver3PWM driverC(PIN_C_U, PIN_C_V, PIN_C_W);
+BLDCDriver3PWM driverA(PIN_A_U, PIN_A_V, PIN_A_W, PIN_A_SLEEP);
+BLDCDriver3PWM driverB(PIN_B_U, PIN_B_V, PIN_B_W, PIN_B_SLEEP);
 
-BLDCMotor motorA(MOTOR_A_POLE_PAIRS, MOTOR_PHASE_RESISTANCE, MOTOR_KV_RATING, MOTOR_LQ, MOTOR_LD);
-BLDCMotor motorB(MOTOR_B_POLE_PAIRS, MOTOR_PHASE_RESISTANCE, MOTOR_KV_RATING, MOTOR_LQ, MOTOR_LD);
-BLDCMotor motorC(MOTOR_C_POLE_PAIRS, MOTOR_PHASE_RESISTANCE, MOTOR_KV_RATING, MOTOR_LQ, MOTOR_LD);
+BLDCMotor motorA(MOTOR_A_POLE_PAIRS, MOTOR_A_PHASE_RESISTANCE, MOTOR_A_KV_RATING, MOTOR_A_LQ, MOTOR_A_LD);
+BLDCMotor motorB(MOTOR_B_POLE_PAIRS, MOTOR_B_PHASE_RESISTANCE, MOTOR_B_KV_RATING, MOTOR_B_LQ, MOTOR_B_LD);
 
 InlineCurrentSense currentSenseA(CURRENT_SHUNT_RESISTANCE, CURRENT_SENSE_GAIN,
                                  PIN_A_CURRENT_U, PIN_A_CURRENT_V);
 InlineCurrentSense currentSenseB(CURRENT_SHUNT_RESISTANCE, CURRENT_SENSE_GAIN,
                                  PIN_B_CURRENT_U, PIN_B_CURRENT_V);
-InlineCurrentSense currentSenseC(CURRENT_SHUNT_RESISTANCE, CURRENT_SENSE_GAIN,
-                                 PIN_C_CURRENT_U, PIN_C_CURRENT_V);
 
 // 当前 FOC 最大输出电压，运行时可由 VF 指令修改，断电后恢复默认值
 float Vfoc = FOC_VOLTAGE_LIMIT_DEFAULT;
@@ -34,20 +30,16 @@ static bool pidPrefsReady = false;
 
 uint8_t modeA = AXIS_MODE_VELOCITY;
 uint8_t modeB = AXIS_MODE_VELOCITY;
-uint8_t modeC = AXIS_MODE_VELOCITY;
 
 float targetVelA = 0.0f;
 float targetVelB = 0.0f;
-float targetVelC = 0.0f;
 
 float targetPosA = 0.0f;
 float targetPosB = 0.0f;
-float targetPosC = 0.0f;
 
 // FOC current torque mode q-axis current commands, unit: A
 float targetIqA = 0.0f;
 float targetIqB = 0.0f;
-float targetIqC = 0.0f;
 
 // ============================================================
 // sleep 状态
@@ -55,7 +47,6 @@ float targetIqC = 0.0f;
 
 bool sleepA = true;
 bool sleepB = true;
-bool sleepC = true;
 
 // ============================================================
 // 软限位状态
@@ -65,8 +56,6 @@ bool limitAUpper = false;
 bool limitALower = false;
 bool limitBUpper = false;
 bool limitBLower = false;
-bool limitCUpper = false;
-bool limitCLower = false;
 
 String axisModeToString(uint8_t mode) {
   if (mode == AXIS_MODE_VELOCITY) {
@@ -82,11 +71,9 @@ String axisModeToString(uint8_t mode) {
 void applyVfoc() {
   driverA.voltage_limit = Vfoc;
   driverB.voltage_limit = Vfoc;
-  driverC.voltage_limit = Vfoc;
 
   motorA.updateVoltageLimit(Vfoc);
   motorB.updateVoltageLimit(Vfoc);
-  motorC.updateVoltageLimit(Vfoc);
 }
 
 
@@ -113,15 +100,12 @@ String getVfocInfo() {
 void applyIfoc() {
   targetIqA = constrain(targetIqA, -Ifoc, Ifoc);
   targetIqB = constrain(targetIqB, -Ifoc, Ifoc);
-  targetIqC = constrain(targetIqC, -Ifoc, Ifoc);
 
   if (modeA == AXIS_MODE_TORQUE) motorA.target = targetIqA;
   if (modeB == AXIS_MODE_TORQUE) motorB.target = targetIqB;
-  if (modeC == AXIS_MODE_TORQUE) motorC.target = targetIqC;
 
   motorA.updateCurrentLimit(Ifoc);
   motorB.updateCurrentLimit(Ifoc);
-  motorC.updateCurrentLimit(Ifoc);
 }
 
 
@@ -142,7 +126,6 @@ String getIfocInfo() {
 static BLDCMotor* getAxisMotor(char axis) {
   if (axis == 'A') return &motorA;
   if (axis == 'B') return &motorB;
-  if (axis == 'C') return &motorC;
   return nullptr;
 }
 
@@ -195,10 +178,8 @@ void loadPidValuesFromFlash() {
 
   loadPidValuesForAxis('V', 'A');
   loadPidValuesForAxis('V', 'B');
-  loadPidValuesForAxis('V', 'C');
   loadPidValuesForAxis('P', 'A');
   loadPidValuesForAxis('P', 'B');
-  loadPidValuesForAxis('P', 'C');
   Serial.println("PID values loaded from NVS.");
 }
 
@@ -251,7 +232,6 @@ String getPidInfo(char loopType, char axis) {
     msg += "\n";
     msg += getSinglePidInfo(loopType, 'B');
     msg += "\n";
-    msg += getSinglePidInfo(loopType, 'C');
     return msg;
   }
 
@@ -278,7 +258,7 @@ static bool applyPidValuesToAxis(char loopType, char axis, float p, float i, flo
 
 bool setPidValues(char loopType, char axis, float p, float i, float d, uint8_t source) {
   if ((loopType != 'V' && loopType != 'P') ||
-      (axis != '\0' && axis != 'A' && axis != 'B' && axis != 'C')) {
+      (axis != '\0' && axis != 'A' && axis != 'B')) {
     sendReply(source, "ERR, PID_FORMAT, USE_VPID<P,I,D>_OR_VAPID<P,I,D>");
     return false;
   }
@@ -286,8 +266,7 @@ bool setPidValues(char loopType, char axis, float p, float i, float d, uint8_t s
   bool ok = true;
   if (axis == '\0') {
     ok = applyPidValuesToAxis(loopType, 'A', p, i, d) &&
-         applyPidValuesToAxis(loopType, 'B', p, i, d) &&
-         applyPidValuesToAxis(loopType, 'C', p, i, d);
+         applyPidValuesToAxis(loopType, 'B', p, i, d);
   } else {
     ok = applyPidValuesToAxis(loopType, axis, p, i, d);
   }
@@ -306,8 +285,7 @@ bool setPidValues(char loopType, char axis, float p, float i, float d, uint8_t s
   if (axis == '\0') {
     bool savedA = savePidValuesForAxis(loopType, 'A');
     bool savedB = savePidValuesForAxis(loopType, 'B');
-    bool savedC = savePidValuesForAxis(loopType, 'C');
-    saved = savedA && savedB && savedC;
+    saved = savedA && savedB;
   } else {
     saved = savePidValuesForAxis(loopType, axis);
   }
@@ -337,21 +315,15 @@ void sleepAxis(char axis) {
   if (axis == 'A') {
     targetVelA = 0.0f;
     targetIqA = 0.0f;
-    motorA.disable();
+    if (driverA.initialized) motorA.disable();
     digitalWrite(PIN_A_SLEEP, LOW);
     sleepA = true;
   } else if (axis == 'B') {
     targetVelB = 0.0f;
     targetIqB = 0.0f;
-    motorB.disable();
+    if (driverB.initialized) motorB.disable();
     digitalWrite(PIN_B_SLEEP, LOW);
     sleepB = true;
-  } else if (axis == 'C') {
-    targetVelC = 0.0f;
-    targetIqC = 0.0f;
-    motorC.disable();
-    digitalWrite(PIN_C_SLEEP, LOW);
-    sleepC = true;
   }
 }
 
@@ -371,88 +343,33 @@ static void syncPositionTargetAfterWake(char axis) {
     motorB.target = getAbsoluteTargetB(targetPosB);
     motorB.PID_angle.reset();
     motorB.PID_velocity.reset();
-  } else if (axis == 'C' && modeC == AXIS_MODE_POSITION) {
-    motorC.updateTorqueControlType(TorqueControlType::foc_current);
-    motorC.updateMotionControlType(MotionControlType::angle);
-    targetPosC = getRelativePosC();
-    motorC.target = getAbsoluteTargetC(targetPosC);
-    motorC.PID_angle.reset();
-    motorC.PID_velocity.reset();
   }
 }
 
 
 bool wakeAxis(char axis) {
-  if (axis == 'A') {
-    digitalWrite(PIN_A_SLEEP, HIGH);
-    delay(10);
-    applyVfoc();
-    motorA.enable();
-    if (motorA.motor_status != FOCMotorStatus::motor_ready) {
-      int ok = motorA.initFOC();
-      if (!ok) {
-        motorA.disable();
-        digitalWrite(PIN_A_SLEEP, LOW);
-        sleepA = true;
-        sendReply(0, "ERR, A_INITFOC_FAILED");
-        return false;
-      }
-    }
-    syncPositionTargetAfterWake('A');
-    sleepA = false;
-    return true;
-  } else if (axis == 'B') {
-    digitalWrite(PIN_B_SLEEP, HIGH);
-    delay(10);
-    applyVfoc();
-    motorB.enable();
-    if (motorB.motor_status != FOCMotorStatus::motor_ready) {
-      int ok = motorB.initFOC();
-      if (!ok) {
-        motorB.disable();
-        digitalWrite(PIN_B_SLEEP, LOW);
-        sleepB = true;
-        sendReply(0, "ERR, B_INITFOC_FAILED");
-        return false;
-      }
-    }
-    syncPositionTargetAfterWake('B');
-    sleepB = false;
-    return true;
-  } else if (axis == 'C') {
-    digitalWrite(PIN_C_SLEEP, HIGH);
-    delay(10);
-    applyVfoc();
-    motorC.enable();
-    if (motorC.motor_status != FOCMotorStatus::motor_ready) {
-      int ok = motorC.initFOC();
-      if (!ok) {
-        motorC.disable();
-        digitalWrite(PIN_C_SLEEP, LOW);
-        sleepC = true;
-        sendReply(0, "ERR, C_INITFOC_FAILED");
-        return false;
-      }
-    }
-    syncPositionTargetAfterWake('C');
-    sleepC = false;
-    return true;
-  }
-  return false;
+  BLDCMotor* motor = getAxisMotor(axis);
+  if (!motor || motor->motor_status != FOCMotorStatus::motor_ready || !canWakeNow()) return false;
+  applyVfoc();
+  motor->enable();
+  delay(10); // MS8313 wake settling before FOC resumes.
+  syncPositionTargetAfterWake(axis);
+  if (axis == 'A') sleepA = false;
+  else sleepB = false;
+  return true;
 }
+
 
 void sleepAllAxis() {
   sleepAxis('A');
   sleepAxis('B');
-  sleepAxis('C');
 }
 
 
 bool wakeAllAxis() {
   bool okA = wakeAxis('A');
   bool okB = wakeAxis('B');
-  bool okC = wakeAxis('C');
-  return okA && okB && okC;
+  return okA && okB;
 }
 
 
@@ -474,87 +391,13 @@ String getAxisLimitText(bool upper, bool lower) {
 
 
 void applyPositionSoftLimit() {
-  float posA = getRelativePosA();
-  float posB = getRelativePosB();
-  float posC = getRelativePosC();
-
-  limitAUpper = posA >= A_MAX_POS;
-  limitALower = posA <= A_MIN_POS;
-
-  limitBUpper = posB >= B_MAX_POS;
-  limitBLower = posB <= B_MIN_POS;
-
-  limitCUpper = posC >= C_MAX_POS;
-  limitCLower = posC <= C_MIN_POS;
-
-  if (modeA == AXIS_MODE_VELOCITY) {
-    if (limitAUpper && targetVelA > 0.0f) {
-      targetVelA = 0.0f;
-      motorA.target = 0.0f;
-      broadcastMsg("A upper pos limit, A_target_vel=0");
-    }
-
-    if (limitALower && targetVelA < 0.0f) {
-      targetVelA = 0.0f;
-      motorA.target = 0.0f;
-      broadcastMsg("A lower pos limit, A_target_vel=0");
-    }
-  }
-
-  if (modeA == AXIS_MODE_TORQUE) {
-    if ((limitAUpper && targetIqA > 0.0f) ||
-        (limitALower && targetIqA < 0.0f)) {
-      targetIqA = 0.0f;
-      motorA.target = 0.0f;
-      broadcastMsg("A pos limit, A_target_iq=0");
-    }
-  }
-
-  if (modeB == AXIS_MODE_VELOCITY) {
-    if (limitBUpper && targetVelB > 0.0f) {
-      targetVelB = 0.0f;
-      motorB.target = 0.0f;
-      broadcastMsg("B upper pos limit, B_target_vel=0");
-    }
-
-    if (limitBLower && targetVelB < 0.0f) {
-      targetVelB = 0.0f;
-      motorB.target = 0.0f;
-      broadcastMsg("B lower pos limit, B_target_vel=0");
-    }
-  }
-
-  if (modeB == AXIS_MODE_TORQUE) {
-    if ((limitBUpper && targetIqB > 0.0f) ||
-        (limitBLower && targetIqB < 0.0f)) {
-      targetIqB = 0.0f;
-      motorB.target = 0.0f;
-      broadcastMsg("B pos limit, B_target_iq=0");
-    }
-  }
-
-  if (modeC == AXIS_MODE_VELOCITY) {
-    if (limitCUpper && targetVelC > 0.0f) {
-      targetVelC = 0.0f;
-      motorC.target = 0.0f;
-      broadcastMsg("C upper pos limit, C_target_vel=0");
-    }
-
-    if (limitCLower && targetVelC < 0.0f) {
-      targetVelC = 0.0f;
-      motorC.target = 0.0f;
-      broadcastMsg("C lower pos limit, C_target_vel=0");
-    }
-  }
-
-  if (modeC == AXIS_MODE_TORQUE) {
-    if ((limitCUpper && targetIqC > 0.0f) ||
-        (limitCLower && targetIqC < 0.0f)) {
-      targetIqC = 0.0f;
-      motorC.target = 0.0f;
-      broadcastMsg("C pos limit, C_target_iq=0");
-    }
-  }
+  // A single-turn angle is cyclic. There is no physical upper/lower stop at
+  // 0/2PI, so velocity and torque commands must be allowed to cross zero.
+  limitAUpper = false;
+  limitALower = false;
+  limitBUpper = false;
+  limitBLower = false;
+  return;
 }
 
 
@@ -562,15 +405,20 @@ void setupDriver(BLDCDriver3PWM& driver) {
   driver.voltage_power_supply = POWER_SUPPLY_VOLTAGE;
   driver.voltage_limit = Vfoc;
   driver.pwm_frequency = PWM_FREQUENCY;
-  driver.init();
+  driver.enable_active_high = true;
+  if (driver.init()) driver.disable();
 }
 
 
 bool setupMotor(BLDCMotor& motor,
                 BLDCDriver3PWM& driver,
-                Sensor& sensor,
+                MT6701SSI& sensor,
                 InlineCurrentSense& currentSense,
-                float maxVel) {
+                float maxVel,
+                const float velocityPid[3],
+                const float positionPid[3],
+                const float currentPid[3]) {
+  if (!driver.initialized) return false;
   motor.linkDriver(&driver);
   motor.linkSensor(&sensor);
   currentSense.linkDriver(&driver);
@@ -587,45 +435,51 @@ bool setupMotor(BLDCMotor& motor,
   motor.current_limit = Ifoc;
   motor.foc_modulation = FOCModulationType::SinePWM;
 
-  motor.PID_velocity.P = 0.10f;
-  motor.PID_velocity.I = 0.20f;
-  motor.PID_velocity.D = 0.0f;
+  motor.PID_velocity.P = velocityPid[0];
+  motor.PID_velocity.I = velocityPid[1];
+  motor.PID_velocity.D = velocityPid[2];
   motor.PID_velocity.limit = Ifoc;
   motor.PID_velocity.output_ramp = 100.0f;
 
-  motor.PID_angle.P = 6.0f;
-  motor.PID_angle.I = 0.0f;
-  motor.PID_angle.D = 0.0f;
+  motor.PID_angle.P = positionPid[0];
+  motor.PID_angle.I = positionPid[1];
+  motor.PID_angle.D = positionPid[2];
   motor.PID_angle.output_ramp = 100.0f;
   motor.PID_angle.limit = maxVel;
 
   motor.LPF_velocity.Tf = 0.02f;
 
-  motor.PID_current_q.P = CURRENT_PID_P;
-  motor.PID_current_q.I = CURRENT_PID_I;
-  motor.PID_current_q.D = 0.0f;
+  motor.PID_current_q.P = currentPid[0];
+  motor.PID_current_q.I = currentPid[1];
+  motor.PID_current_q.D = currentPid[2];
   motor.PID_current_q.limit = Vfoc;
-  motor.PID_current_d.P = CURRENT_PID_P;
-  motor.PID_current_d.I = CURRENT_PID_I;
-  motor.PID_current_d.D = 0.0f;
+  motor.PID_current_d.P = currentPid[0];
+  motor.PID_current_d.I = currentPid[1];
+  motor.PID_current_d.D = currentPid[2];
   motor.PID_current_d.limit = Vfoc;
   motor.LPF_current_q.Tf = CURRENT_LPF_TF;
   motor.LPF_current_d.Tf = CURRENT_LPF_TF;
 
-  // Do not attach SimpleFOC's verbose monitor to USB CDC.  On ESP32-S3 the
-  // hardware CDC link may look connected when Windows has enumerated it but
-  // no terminal is reading, which can fill the TX path during initFOC().
-  // Protocol replies and the firmware's own concise diagnostics still use
-  // Serial normally.
+  // Enable SimpleFOC initialization/error diagnostics (MOT: / ERR-MOT:).
+  // Serial TX is configured as non-blocking in setup(), so an unopened USB
+  // CDC terminal must not hold the motor-control startup path here.
+  motor.useMonitoring(Serial);
 
   int initOk = motor.init();
   int focOk = 0;
   if (initOk) {
+    // SimpleFOC expects a continuous angle while checking sensor direction
+    // and pole pairs. Unwrap only for initFOC; runtime remains single-turn.
+    sensor.setCalibrationUnwrap(true);
+    Serial.println("ENC: calibration unwrap ON");
     focOk = motor.initFOC();
+    sensor.setCalibrationUnwrap(false);
+    Serial.println("ENC: calibration unwrap OFF");
   }
+  // initFOC failures must also drive nSLEEP LOW.
+  motor.disable();
   return initOk && focOk;
 }
-
 
 void runAxisControl(BLDCMotor& motor,
                     bool axisSleep,
@@ -644,7 +498,13 @@ void runAxisControl(BLDCMotor& motor,
   } else if (axisMode == AXIS_MODE_TORQUE) {
     motor.move(torqueCurrentTarget);
   } else {
-    motor.move(absolutePositionTarget);
+    float currentAngle = motor.shaftAngle();
+    float error = absolutePositionTarget - currentAngle;
+    while (error > 0.5f * _2PI) error -= _2PI;
+    while (error < -0.5f * _2PI) error += _2PI;
+    // Give SimpleFOC an equivalent target nearest to the measured angle so
+    // its PID sees the circular shortest-path error, not a 2PI jump.
+    motor.move(currentAngle + error);
   }
 }
 
@@ -669,14 +529,6 @@ void setAxisTorqueCurrent(char axis, float value, uint8_t source) {
     targetIqB = iq;
     motorB.target = targetIqB;
     sendReply(source, "OK, TB=" + String(targetIqB, 4));
-  } else if (axis == 'C') {
-    modeC = AXIS_MODE_TORQUE;
-    motorC.updateCurrentLimit(Ifoc);
-    motorC.updateTorqueControlType(TorqueControlType::foc_current);
-    motorC.updateMotionControlType(MotionControlType::torque);
-    targetIqC = iq;
-    motorC.target = targetIqC;
-    sendReply(source, "OK, TC=" + String(targetIqC, 4));
   } else {
     sendReply(source, "ERR, UNKNOWN_AXIS");
   }
@@ -700,14 +552,6 @@ void setAxisVelocity(char axis, float value, uint8_t source) {
     targetVelB = constrain(value, -B_MAX_VEL, B_MAX_VEL);
     motorB.target = targetVelB;
     sendReply(source, "OK, VB=" + String(targetVelB, 4));
-  } else if (axis == 'C') {
-    modeC = AXIS_MODE_VELOCITY;
-    motorC.updateTorqueControlType(TorqueControlType::foc_current);
-    motorC.controller = MotionControlType::velocity;
-    targetIqC = 0.0f;
-    targetVelC = constrain(value, -C_MAX_VEL, C_MAX_VEL);
-    motorC.target = targetVelC;
-    sendReply(source, "OK, VC=" + String(targetVelC, 4));
   } else {
     sendReply(source, "ERR, UNKNOWN_AXIS");
   }
@@ -743,12 +587,6 @@ void setAxisPosition(char axis, float value, uint8_t source) {
     targetPosB = constrain(value, B_MIN_POS, B_MAX_POS);
     motorB.target = getAbsoluteTargetB(targetPosB);
     sendReply(source, "OK, PB=" + String(targetPosB, 4));
-  } else if (axis == 'C') {
-    enterPositionMode(motorC, modeC);
-    targetIqC = 0.0f;
-    targetPosC = constrain(value, C_MIN_POS, C_MAX_POS);
-    motorC.target = getAbsoluteTargetC(targetPosC);
-    sendReply(source, "OK, PC=" + String(targetPosC, 4));
   } else {
     sendReply(source, "ERR, UNKNOWN_AXIS");
   }
@@ -768,12 +606,6 @@ void setAxisDisplacement(char axis, float value, uint8_t source) {
     targetPosB = constrain(getRelativePosB() + value, B_MIN_POS, B_MAX_POS);
     motorB.target = getAbsoluteTargetB(targetPosB);
     sendReply(source, "OK, PB=" + String(targetPosB, 4));
-  } else if (axis == 'C') {
-    enterPositionMode(motorC, modeC);
-    targetIqC = 0.0f;
-    targetPosC = constrain(getRelativePosC() + value, C_MIN_POS, C_MAX_POS);
-    motorC.target = getAbsoluteTargetC(targetPosC);
-    sendReply(source, "OK, PC=" + String(targetPosC, 4));
   } else {
     sendReply(source, "ERR, UNKNOWN_AXIS");
   }
@@ -783,18 +615,14 @@ void setAxisDisplacement(char axis, float value, uint8_t source) {
 void allTargetZero(uint8_t source) {
   targetPosA = 0.0f;
   targetPosB = 0.0f;
-  targetPosC = 0.0f;
   targetIqA = 0.0f;
   targetIqB = 0.0f;
-  targetIqC = 0.0f;
 
   enterPositionMode(motorA, modeA);
   enterPositionMode(motorB, modeB);
-  enterPositionMode(motorC, modeC);
 
   motorA.target = getAbsoluteTargetA(0.0f);
   motorB.target = getAbsoluteTargetB(0.0f);
-  motorC.target = getAbsoluteTargetC(0.0f);
 
   sendReply(source, "OK, ALL0");
 }

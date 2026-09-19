@@ -4,6 +4,8 @@ void sendReply(uint8_t source, const String& msg) {
   String out = getTimestampHeader();
   out += msg;
 
+  if (source == 3) { canSendText(out); return; }
+
   if (source == 0) {
     Serial.println(out);
   }
@@ -29,6 +31,7 @@ void broadcastMsg(const String& msg) {
   out += msg;
 
   Serial.println(out);
+  canSendText(out);
 
 #if ENABLE_BLE
   bleSendText(out);
@@ -44,6 +47,7 @@ void broadcastMsg(const String& msg) {
 
 void broadcastRaw(const String& msg) {
   Serial.print(msg);
+  canSendText(msg);
 
 #if ENABLE_BLE
   bleSendText(msg);
@@ -94,16 +98,6 @@ String getStatusText() {
   msg += (sleepB ? "YES" : "NO");
   msg += ", \n";
 
-  msg += "C_pos=";
-  msg += String(getRelativePosC(), 4);
-  msg += ", C_vel=";
-  msg += String(motorC.shaft_velocity, 4);
-  msg += ", C_iq=";
-  msg += String(motorC.current.q, 4);
-  msg += ", C_sleep=";
-  msg += (sleepC ? "YES" : "NO");
-  msg += ",\n";
-
   msg += "Von=";
   msg += String(readVonVoltage(), 2);
   msg += ", Vfoc=";
@@ -125,6 +119,7 @@ String getStatusText() {
 
   msg += ", WIFI=";
   msg += getWifiBriefText();
+  msg += ", " + getCanInfo();
 
   return msg;
 }
@@ -181,22 +176,6 @@ String getSingleAxisStatus(char axis) {
     maxPos = B_MAX_POS;
     minPos = B_MIN_POS;
     maxVel = B_MAX_VEL;
-  } else if (axis == 'C') {
-    prefix = "C";
-    pos = getRelativePosC();
-    vel = motorC.shaft_velocity;
-    mode = modeC;
-    targetVel = targetVelC;
-    targetPos = targetPosC;
-    targetIq = targetIqC;
-    measuredId = motorC.current.d;
-    measuredIq = motorC.current.q;
-    limit = getAxisLimitText(limitCUpper, limitCLower);
-    sleep = (sleepC ? "YES" : "NO");
-    fault = getAxisFaultBriefText('C');
-    maxPos = C_MAX_POS;
-    minPos = C_MIN_POS;
-    maxVel = C_MAX_VEL;
   } else {
     return "ERR, UNKNOWN_AXIS";
   }
@@ -290,6 +269,7 @@ String getCommInfo() {
 
 #endif
 
+  msg += ",\n" + getCanInfo();
   return msg;
 }
 
@@ -297,7 +277,6 @@ String getCommInfo() {
 String getCurrentInfo() {
   PhaseCurrent_s currentA = currentSenseA.getPhaseCurrents();
   PhaseCurrent_s currentB = currentSenseB.getPhaseCurrents();
-  PhaseCurrent_s currentC = currentSenseC.getPhaseCurrents();
   String msg = "";
 
   msg += "A_iu=" + String(currentA.a, 4);
@@ -306,9 +285,6 @@ String getCurrentInfo() {
   msg += "\nB_iu=" + String(currentB.a, 4);
   msg += ", B_iv=" + String(currentB.b, 4);
   msg += ", B_iw=" + String(-currentB.a - currentB.b, 4);
-  msg += "\nC_iu=" + String(currentC.a, 4);
-  msg += ", C_iv=" + String(currentC.b, 4);
-  msg += ", C_iw=" + String(-currentC.a - currentC.b, 4);
 
   return msg;
 }
@@ -333,14 +309,6 @@ String getLimitInfo() {
   msg += String(B_MAX_POS, 4);
   msg += ",\n";
 
-  msg += "C_MAX_VEL=";
-  msg += String(C_MAX_VEL, 4);
-  msg += ", C_MIN_POS=";
-  msg += String(C_MIN_POS, 4);
-  msg += ", C_MAX_POS=";
-  msg += String(C_MAX_POS, 4);
-  msg += ", \n";
-
   msg += "VON_MIN=";
   msg += String(VON_MIN, 2);
   msg += ", VON_MAX=";
@@ -349,14 +317,22 @@ String getLimitInfo() {
   msg += String(FOC_CURRENT_LIMIT_MAX, 4);
   msg += ", \n";
 
-  msg += "MOTOR_RS=";
-  msg += String(MOTOR_PHASE_RESISTANCE, 4);
-  msg += ", MOTOR_KV=";
-  msg += String(MOTOR_KV_RATING, 2);
-  msg += ", MOTOR_LQ=";
-  msg += String(MOTOR_LQ, 6);
-  msg += ", MOTOR_LD=";
-  msg += String(MOTOR_LD, 6);
+  msg += "MOTOR_A_RS=";
+  msg += String(MOTOR_A_PHASE_RESISTANCE, 4);
+  msg += ", MOTOR_A_KV=";
+  msg += String(MOTOR_A_KV_RATING, 2);
+  msg += ", MOTOR_A_LQ=";
+  msg += String(MOTOR_A_LQ, 6);
+  msg += ", MOTOR_A_LD=";
+  msg += String(MOTOR_A_LD, 6);
+  msg += ",\nMOTOR_B_RS=";
+  msg += String(MOTOR_B_PHASE_RESISTANCE, 4);
+  msg += ", MOTOR_B_KV=";
+  msg += String(MOTOR_B_KV_RATING, 2);
+  msg += ", MOTOR_B_LQ=";
+  msg += String(MOTOR_B_LQ, 6);
+  msg += ", MOTOR_B_LD=";
+  msg += String(MOTOR_B_LD, 6);
   msg += ",\nTORQUE_CONTROL=FOC_CURRENT";
   msg += ", CURRENT_SENSE=INLINE_INA240A2";
   msg += ", SHUNT_OHM=";
@@ -411,7 +387,7 @@ static bool parseFloatList(String text, float* values, uint8_t count) {
 
     char* endPtr = nullptr;
     values[i] = strtof(item.c_str(), &endPtr);
-    if (endPtr == item.c_str() || *endPtr != '\0') {
+    if (endPtr == item.c_str() || *endPtr != '\0' || !isfinite(values[i])) {
       return false;
     }
   }
@@ -431,7 +407,7 @@ static bool parsePidValues(String text, float* values) {
 
     char* endPtr = nullptr;
     values[index] = strtof(cursor, &endPtr);
-    if (endPtr == cursor) return false;
+    if (endPtr == cursor || !isfinite(values[index]) || values[index] < 0.0f) return false;
     cursor = endPtr;
 
     bool hadSpace = false;
@@ -456,7 +432,15 @@ static bool parsePidValues(String text, float* values) {
 }
 
 
+static bool parseCommandNumber(String text, float& value) {
+  text.trim();
+  char* end = nullptr;
+  value = strtof(text.c_str(), &end);
+  return end != text.c_str() && *end == '\0' && isfinite(value);
+}
+
 void handleCommand(String cmd, uint8_t source) {
+  if (cmd.length() > COMMAND_MAX_LENGTH) { sendReply(source, "ERR, COMMAND_TOO_LONG"); return; }
   cmd.trim();
 
   String rawCmd = cmd;
@@ -499,10 +483,6 @@ void handleCommand(String cmd, uint8_t source) {
     return;
   }
 
-  if (upperCmd == "STATC?") {
-    sendReply(source, getSingleAxisStatus('C'));
-    return;
-  }
 
   if (upperCmd == "ENC?") {
     String msg = "";
@@ -510,8 +490,6 @@ void handleCommand(String cmd, uint8_t source) {
     msg += String(sensorA.getSensorAngle(), 6);
     msg += ", sensorB=";
     msg += String(sensorB.getSensorAngle(), 6);
-    msg += ", sensorC=";
-    msg += String(sensorC.getSensorAngle(), 6);
     sendReply(source, msg);
     return;
   }
@@ -563,7 +541,7 @@ void handleCommand(String cmd, uint8_t source) {
 
   if (upperCmd.length() == 6 &&
       (upperCmd.charAt(0) == 'V' || upperCmd.charAt(0) == 'P') &&
-      (upperCmd.charAt(1) == 'A' || upperCmd.charAt(1) == 'B' || upperCmd.charAt(1) == 'C') &&
+      (upperCmd.charAt(1) == 'A' || upperCmd.charAt(1) == 'B') &&
       upperCmd.substring(2) == "PID?") {
     sendReply(source, getPidInfo(upperCmd.charAt(0), upperCmd.charAt(1)));
     return;
@@ -572,7 +550,7 @@ void handleCommand(String cmd, uint8_t source) {
   bool isAllAxisPidSet = upperCmd.startsWith("VPID") || upperCmd.startsWith("PPID");
   bool isSingleAxisPidSet = upperCmd.length() > 5 &&
                             (upperCmd.charAt(0) == 'V' || upperCmd.charAt(0) == 'P') &&
-                            (upperCmd.charAt(1) == 'A' || upperCmd.charAt(1) == 'B' || upperCmd.charAt(1) == 'C') &&
+                            (upperCmd.charAt(1) == 'A' || upperCmd.charAt(1) == 'B') &&
                             upperCmd.substring(2, 5) == "PID";
 
   if (isAllAxisPidSet || isSingleAxisPidSet) {
@@ -672,10 +650,6 @@ void handleCommand(String cmd, uint8_t source) {
     return;
   }
 
-  if (upperCmd == "ZC!") {
-    sendReply(source, setCurrentPositionAsZero('C'));
-    return;
-  }
 
   if (upperCmd == "ALL0") {
     allTargetZero(source);
@@ -700,11 +674,6 @@ void handleCommand(String cmd, uint8_t source) {
     return;
   }
 
-  if (upperCmd == "SLEEPC") {
-    sleepAxis('C');
-    sendReply(source, "OK, SLEEPC");
-    return;
-  }
 
   if (upperCmd == "WAKE") {
     if (!canWakeNow()) {
@@ -748,28 +717,21 @@ void handleCommand(String cmd, uint8_t source) {
     return;
   }
 
-  if (upperCmd == "WAKEC") {
-    if (!canWakeNow()) {
-      sendReply(source, "ERR, WAKEC_DENIED, USE_FAULT?_AND_CLEARFAULT");
-      return;
-    }
-
-    if (wakeAxis('C')) {
-      sendReply(source, "OK, WAKEC");
-    } else {
-      sendReply(source, "ERR, WAKEC_FAILED");
-    }
-    return;
-  }
 
   if (upperCmd.startsWith("VF") && upperCmd.length() > 2) {
-    float value = upperCmd.substring(2).toFloat();
+    float value;
+    if (!parseCommandNumber(upperCmd.substring(2), value)) {
+      sendReply(source, "ERR, INVALID_NUMBER"); return;
+    }
     setVfoc(value, source);
     return;
   }
 
   if (upperCmd.startsWith("IF") && upperCmd.length() > 2) {
-    float value = upperCmd.substring(2).toFloat();
+    float value;
+    if (!parseCommandNumber(upperCmd.substring(2), value)) {
+      sendReply(source, "ERR, INVALID_NUMBER"); return;
+    }
     setIfoc(value, source);
     return;
   }
@@ -779,8 +741,11 @@ void handleCommand(String cmd, uint8_t source) {
     char axis = upperCmd.charAt(1);
 
     if ((type == 'V' || type == 'P' || type == 'D' || type == 'T') &&
-        (axis == 'A' || axis == 'B' || axis == 'C')) {
-      float value = upperCmd.substring(2).toFloat();
+        (axis == 'A' || axis == 'B')) {
+      float value;
+    if (!parseCommandNumber(upperCmd.substring(2), value)) {
+      sendReply(source, "ERR, INVALID_NUMBER"); return;
+    }
 
       if (type == 'V') {
         setAxisVelocity(axis, value, source);

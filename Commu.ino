@@ -1,10 +1,13 @@
 #include "Globals.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 // ============================================================
 // 通信对象和接收缓冲
 // ============================================================
 
 #if ENABLE_BLE
+static QueueHandle_t bleCommands = nullptr;
 BLEServer* bleServer = NULL;
 BLECharacteristic* txCharacteristic = NULL;
 BLECharacteristic* rxCharacteristic = NULL;
@@ -53,11 +56,18 @@ class RxCallbacks : public BLECharacteristicCallbacks {
       return;
     }
 
-    handleCommand(cmd, 1);
+    if (cmd.length() > COMMAND_MAX_LENGTH || !bleCommands) {
+      bleSendText("ERR, COMMAND_TOO_LONG_OR_UNAVAILABLE"); return;
+    }
+    char pending[COMMAND_MAX_LENGTH + 1] = {};
+    cmd.toCharArray(pending, sizeof(pending));
+    if (xQueueSend(bleCommands, pending, 0) != pdTRUE) bleSendText("ERR, COMMAND_QUEUE_FULL");
   }
 };
 
 void setupBLE() {
+  bleCommands = xQueueCreate(8, COMMAND_MAX_LENGTH + 1);
+  if (!bleCommands) { Serial.println("BLE queue allocation failed"); return; }
   BLEDevice::init(DEVICE_NAME);
 
   bleServer = BLEDevice::createServer();
@@ -151,54 +161,57 @@ void setupWiFi() {
 #endif
 }
 
+// Reject an oversized line in its entirety; do not execute its trailing suffix.
+static bool feedCommandLine(char c, String& buffer, bool& discard, uint8_t source) {
+  if (c == '\n' || c == '\r') {
+    if (discard) { discard = false; buffer = ""; return false; }
+    if (buffer.length()) {
+      String command = buffer;
+      buffer = "";
+      handleCommand(command, source);
+      return true;
+    }
+  } else if (!discard) {
+    if (buffer.length() >= COMMAND_MAX_LENGTH || c == 0) {
+      buffer = ""; discard = true;
+      sendReply(source, "ERR, COMMAND_TOO_LONG_OR_INVALID");
+    } else buffer += c;
+  }
+  return false;
+}
+
 void handleWiFiCommand() {
 #if WIFI_MODE != WIFI_MODE_OFF
-
+  static bool discard = false;
   if (!wifiClient || !wifiClient.connected()) {
     WiFiClient newClient = wifiServer.available();
-
     if (newClient) {
       wifiClient = newClient;
       wifiRxBuffer = "";
+      discard = false;
       broadcastMsg("WiFi client connected");
-      wifiClient.println("Connected to Upper1.1-FOC");
+      wifiClient.println("Connected to Upper3.0-FOC");
     }
   }
-
   if (wifiClient && wifiClient.connected()) {
-    while (wifiClient.available()) {
-      char c = wifiClient.read();
-
-      if (c == '\n' || c == '\r') {
-        if (wifiRxBuffer.length() > 0) {
-          String cmd = wifiRxBuffer;
-          wifiRxBuffer = "";
-          cmd.trim();
-          handleCommand(cmd, 2);
-        }
-      } else {
-        wifiRxBuffer += c;
-      }
+    for (uint8_t n = 0; n < 64 && wifiClient.available(); ++n) {
+      if (feedCommandLine(wifiClient.read(), wifiRxBuffer, discard, 2)) break;
     }
   }
-
 #endif
 }
 
-
 void handleSerialCommand() {
-  while (Serial.available()) {
-    char c = Serial.read();
-
-    if (c == '\n' || c == '\r') {
-      if (serialRxBuffer.length() > 0) {
-        String cmd = serialRxBuffer;
-        serialRxBuffer = "";
-        cmd.trim();
-        handleCommand(cmd, 0);
-      }
-    } else {
-      serialRxBuffer += c;
-    }
+  static bool discard = false;
+  for (uint8_t n = 0; n < 64 && Serial.available(); ++n) {
+    if (feedCommandLine(Serial.read(), serialRxBuffer, discard, 0)) break;
   }
+}
+
+
+void handleBLECommand() {
+#if ENABLE_BLE
+  char pending[COMMAND_MAX_LENGTH + 1];
+  if (bleCommands && xQueueReceive(bleCommands, pending, 0) == pdTRUE) handleCommand(String(pending), 1);
+#endif
 }

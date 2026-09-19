@@ -18,11 +18,27 @@ class MT6701SSI : public Sensor {
     MT6701SSI(uint8_t csPin, SPIClass* spiBus);
     void init() override;
     float getSensorAngle() override;
+    void update() override;
+    float getMechanicalAngle() override;
+    float getAngle() override;
+    double getPreciseAngle() override;
+    float getVelocity() override;
+    int32_t getFullRotations() override;
+    void setCalibrationUnwrap(bool enabled);
 
   private:
     uint8_t _csPin;
     SPIClass* _spiBus;
     float _angle;
+    float _velocity;
+    float _velocityAngle;
+    uint32_t _velocityTimestamp;
+    bool _hasSample;
+    bool _hasVelocitySample;
+    bool _calibrationUnwrap;
+    bool _unwrapHasSample;
+    float _unwrapAngle;
+    float _unwrapPrevious;
 
     uint32_t readRaw24();
 };
@@ -35,19 +51,15 @@ extern SPIClass spiBus;
 
 extern MT6701SSI sensorA;
 extern MT6701SSI sensorB;
-extern MT6701SSI sensorC;
 
 extern BLDCDriver3PWM driverA;
 extern BLDCDriver3PWM driverB;
-extern BLDCDriver3PWM driverC;
 
 extern BLDCMotor motorA;
 extern BLDCMotor motorB;
-extern BLDCMotor motorC;
 
 extern InlineCurrentSense currentSenseA;
 extern InlineCurrentSense currentSenseB;
-extern InlineCurrentSense currentSenseC;
 
 extern Preferences zeroPrefs;
 
@@ -72,7 +84,6 @@ extern String serialRxBuffer;
 
 extern float homeAOffset;
 extern float homeBOffset;
-extern float homeCOffset;
 
 // ============================================================
 // 电机运行变量
@@ -83,30 +94,23 @@ extern float Ifoc;
 
 extern uint8_t modeA;
 extern uint8_t modeB;
-extern uint8_t modeC;
 
 extern float targetVelA;
 extern float targetVelB;
-extern float targetVelC;
 
 extern float targetPosA;
 extern float targetPosB;
-extern float targetPosC;
 
 extern float targetIqA;
 extern float targetIqB;
-extern float targetIqC;
 
 extern bool sleepA;
 extern bool sleepB;
-extern bool sleepC;
 
 extern bool limitAUpper;
 extern bool limitALower;
 extern bool limitBUpper;
 extern bool limitBLower;
-extern bool limitCUpper;
-extern bool limitCLower;
 
 // ============================================================
 // Fault 运行变量
@@ -114,17 +118,14 @@ extern bool limitCLower;
 
 extern bool currentFaultA;
 extern bool currentFaultB;
-extern bool currentFaultC;
 extern bool currentVonFault;
 
 extern bool latchFaultA;
 extern bool latchFaultB;
-extern bool latchFaultC;
 extern bool latchVonFault;
 
 extern uint64_t A_fault_time_ms;
 extern uint64_t B_fault_time_ms;
-extern uint64_t C_fault_time_ms;
 extern uint64_t Von_fault_time_ms;
 
 extern float Von_fault_value;
@@ -153,10 +154,8 @@ void saveZeroOffsetsToFlash();
 void printZeroOffsetsAtBoot();
 float getRelativePosA();
 float getRelativePosB();
-float getRelativePosC();
 float getAbsoluteTargetA(float relativeTarget);
 float getAbsoluteTargetB(float relativeTarget);
-float getAbsoluteTargetC(float relativeTarget);
 String getCalibrationInfo();
 String setCurrentPositionAsZero(char axis);
 
@@ -191,9 +190,12 @@ void applyPositionSoftLimit();
 void setupDriver(BLDCDriver3PWM& driver);
 bool setupMotor(BLDCMotor& motor,
                 BLDCDriver3PWM& driver,
-                Sensor& sensor,
+                MT6701SSI& sensor,
                 InlineCurrentSense& currentSense,
-                float maxVel);
+                float maxVel,
+                const float velocityPid[3],
+                const float positionPid[3],
+                const float currentPid[3]);
 void setAxisVelocity(char axis, float value, uint8_t source);
 void setAxisPosition(char axis, float value, uint8_t source);
 void setAxisDisplacement(char axis, float value, uint8_t source);
@@ -225,3 +227,10 @@ String getCurrentInfo();
 String getCxkText();
 void handleCommand(String cmd, uint8_t source);
 void broadcastRunningStatus();
+
+// Can.ino; source 3 uses framed classic CAN text commands.
+void setupCAN();
+void handleCAN();
+void canSendText(const String& msg);
+String getCanInfo();
+void handleBLECommand();

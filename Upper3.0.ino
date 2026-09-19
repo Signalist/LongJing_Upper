@@ -19,7 +19,7 @@
 //    Flow Control: None
 //
 // 2、BLE
-//    Device Name：Upper1.1-FOC
+//    Device Name：Upper3.0-FOC
 //    SERVICE_UUID：19161916-1916-1916-1916-aabbccdd0000
 //    RX_CHAR_UUID：19161916-1916-1916-1916-aabbccdd0001（PC -> ESP32）
 //    TX_CHAR_UUID：19161916-1916-1916-1916-aabbccdd0002（ESP32 -> PC）
@@ -96,27 +96,16 @@ void setup()
   Serial.println("BLE OTA OFF.");
   Serial.println("FAULT N STOP OFF.");
 
-  // GPIO35/36/37 are available only when Octal PSRAM is disabled. Do not
-  // touch these shared pins if the board configuration enabled PSRAM.
-  if (ESP.getPsramSize() != 0) {
-    Serial.println("FATAL: PSRAM must be Disabled; GPIO35/36/37 are in use.");
-    while (true) {
-      updateStatusLeds();
-      delay(1);
-    }
-  }
-  Serial.println("PSRAM disabled; GPIO35/36/37 available.");
-  
-  // MS8313 管脚定义
-  pinMode(PIN_A_SLEEP, OUTPUT);
-  pinMode(PIN_B_SLEEP, OUTPUT);
-  pinMode(PIN_C_SLEEP, OUTPUT);
-  pinMode(PIN_A_FAULT, INPUT_PULLUP);
-  pinMode(PIN_B_FAULT, INPUT_PULLUP);
-  pinMode(PIN_C_FAULT, INPUT_PULLUP);
+  // Upper3.0 avoids GPIO35-37 and strapping GPIO45-46.
+  // MS8313 nSLEEP has an external pulldown; HIGH still means awake.
   digitalWrite(PIN_A_SLEEP, LOW);
   digitalWrite(PIN_B_SLEEP, LOW);
-  digitalWrite(PIN_C_SLEEP, LOW);
+  pinMode(PIN_A_SLEEP, OUTPUT);
+  pinMode(PIN_B_SLEEP, OUTPUT);
+  pinMode(PIN_A_FAULT, INPUT_PULLUP);
+  pinMode(PIN_B_FAULT, INPUT_PULLUP);
+  digitalWrite(PIN_A_SLEEP, LOW);
+  digitalWrite(PIN_B_SLEEP, LOW);
 
   // 打印零位参数
   loadZeroOffsetsFromFlash();
@@ -133,9 +122,12 @@ void setup()
   Serial.println("Initializing snesors...");
   spiBus.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
   delay(100);
+  digitalWrite(PIN_ENC_A_CS, HIGH);
+  digitalWrite(PIN_ENC_B_CS, HIGH);
+  pinMode(PIN_ENC_A_CS, OUTPUT);
+  pinMode(PIN_ENC_B_CS, OUTPUT);
   sensorA.init();
   sensorB.init();
-  sensorC.init();
   Serial.print("Sensor A single=");
   Serial.print(sensorA.getSensorAngle(), 6);
   Serial.print(", multi=");
@@ -144,77 +136,67 @@ void setup()
   Serial.print(sensorB.getSensorAngle(), 6);
   Serial.print(", multi=");
   Serial.println(sensorB.getAngle(), 6);
-  Serial.print("Sensor C single=");
-  Serial.print(sensorC.getSensorAngle(), 6);
-  Serial.print(", multi=");
-  Serial.println(sensorC.getAngle(), 6);
 
   // Driver 初始化
   Serial.println("Initializing drivers...");
-  digitalWrite(PIN_A_SLEEP, HIGH);
-  digitalWrite(PIN_B_SLEEP, HIGH);
-  digitalWrite(PIN_C_SLEEP, HIGH);
-  Serial.println("All drivers wake");
-  delay(100);
   setupDriver(driverA);
   setupDriver(driverB);
-  setupDriver(driverC);
   Serial.println("PWM available");
 
   // Motor 初始化
   Serial.println("Initializing motors...");
-  bool motorAReady = setupMotor(motorA, driverA, sensorA, currentSenseA, A_MAX_VEL);
-  bool motorBReady = setupMotor(motorB, driverB, sensorB, currentSenseB, B_MAX_VEL);
-  bool motorCReady = setupMotor(motorC, driverC, sensorC, currentSenseC, C_MAX_VEL);
+
+  bool motorAReady = setupMotor(motorA, driverA, sensorA, currentSenseA, A_MAX_VEL,
+                                A_VELOCITY_PID_DEFAULT, A_POSITION_PID_DEFAULT,
+                                A_CURRENT_PID_DEFAULT);
+  bool motorBReady = setupMotor(motorB, driverB, sensorB, currentSenseB, B_MAX_VEL,
+                                B_VELOCITY_PID_DEFAULT, B_POSITION_PID_DEFAULT,
+                                B_CURRENT_PID_DEFAULT);
+  // Keep both bridges asleep while communication services start.
+  sleepAllAxis();
   loadPidValuesFromFlash();
   Serial.print("FOC ready: A=");
   Serial.print(motorAReady);
   Serial.print(", B=");
-  Serial.print(motorBReady);
-  Serial.print(", C=");
-  Serial.println(motorCReady);
+  Serial.println(motorBReady);
   targetVelA = 0.0f;
   targetVelB = 0.0f;
-  targetVelC = 0.0f;
   targetPosA = 0.0f;
   targetPosB = 0.0f;
-  targetPosC = 0.0f;
   targetIqA = 0.0f;
   targetIqB = 0.0f;
-  targetIqC = 0.0f;
   Serial.println("Target available");
   modeA = AXIS_MODE_POSITION;
   modeB = AXIS_MODE_POSITION;
-  modeC = AXIS_MODE_POSITION;
   motorA.controller = MotionControlType::angle;
   motorB.controller = MotionControlType::angle;
-  motorC.controller = MotionControlType::angle;
-  sleepA = !motorAReady;
-  sleepB = !motorBReady;
-  sleepC = !motorCReady;
+
   Serial.println("Closed-loop available");
   
-  // motorA.target = getAbsoluteTargetA(0.0f);  // 相对0位角度改为绝对角度
-  motorB.target = getAbsoluteTargetB(0.0f);
-  // motorC.target = getAbsoluteTargetC(0.0f);
+  // Start closed-loop control by holding the post-calibration position rather
+  // than immediately chasing an old zero offset stored in flash.
+  targetPosA = getRelativePosA();
+  targetPosB = getRelativePosB();
+  motorA.target = motorA.shaftAngle();
+  motorB.target = motorB.shaftAngle();
+  motorA.PID_angle.reset();
+  motorB.PID_angle.reset();
+  motorA.PID_velocity.reset();
+  motorB.PID_velocity.reset();
   Serial.println("Motors under control");
 
   // 无线通信初始化
   Serial.println("Initializing communicators...");
   setupBLE();
   setupWiFi();
+  setupCAN();
 
-   // 此处原本是做自启动控制，但发现 Sleep 状态无法完成 motor.initFOC()，遂废弃
-// #if AUTO_WAKE_ON_BOOT
-//   wakeAllAxis();
-//   Serial.println("AUTO_WAKE_ON_BOOT=ON, motors enabled.");
-// #else
-//   sleepAllAxis();
-//   Serial.println("AUTO_WAKE_ON_BOOT=OFF, motors sleeping. Send WAKE to enable.");
-// #endif
+  // Calibration needs an awake bridge; restore hold only after setup finishes.
+  if (motorAReady) wakeAxis('A');
+  if (motorBReady) wakeAxis('B');
 
   // 广播ready以及重要参数
-  broadcastMsg("System all ready.");
+  broadcastMsg(motorAReady && motorBReady ? "System all ready." : "System degraded: FOC initialization failed.");
   broadcastMsg(getCalibrationInfo());
   broadcastMsg(getLimitInfo());
   broadcastMsg(getStatusText());
@@ -252,13 +234,9 @@ void loop()
                  targetVelB,
                  getAbsoluteTargetB(targetPosB),
                  targetIqB);
-  runAxisControl(motorC,
-                 sleepC,
-                 modeC,
-                 targetVelC,
-                 getAbsoluteTargetC(targetPosC),
-                 targetIqC);
 
+  handleCAN();
+  handleBLECommand();
   handleSerialCommand();
   handleWiFiCommand();
 
