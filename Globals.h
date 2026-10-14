@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Config.h"
+#include "libraries/Simple_FOC/src/common/zerohero_angle.h"
 void runAxisControl(BLDCMotor& motor,
                     bool axisSleep,
                     uint8_t axisMode,
@@ -18,11 +19,27 @@ class MT6701SSI : public Sensor {
     MT6701SSI(uint8_t csPin, SPIClass* spiBus);
     void init() override;
     float getSensorAngle() override;
+    void update() override;
+    float getMechanicalAngle() override;
+    float getAngle() override;
+    double getPreciseAngle() override;
+    float getVelocity() override;
+    int32_t getFullRotations() override;
+    void setCalibrationUnwrap(bool enabled);
 
   private:
     uint8_t _csPin;
     SPIClass* _spiBus;
     float _angle;
+    float _velocity;
+    float _velocityAngle;
+    uint32_t _velocityTimestamp;
+    bool _hasSample;
+    bool _hasVelocitySample;
+    bool _calibrationUnwrap;
+    bool _unwrapHasSample;
+    float _unwrapAngle;
+    float _unwrapPrevious;
 
     uint32_t readRaw24();
 };
@@ -191,9 +208,13 @@ void applyPositionSoftLimit();
 void setupDriver(BLDCDriver3PWM& driver);
 bool setupMotor(BLDCMotor& motor,
                 BLDCDriver3PWM& driver,
-                Sensor& sensor,
+                MT6701SSI& sensor,
                 InlineCurrentSense& currentSense,
-                float maxVel);
+                float maxVel,
+                const float velocityPid[3],
+                const float positionPid[3],
+                const float currentPid[3],
+                bool useMeasuredCurrent);
 void setAxisVelocity(char axis, float value, uint8_t source);
 void setAxisPosition(char axis, float value, uint8_t source);
 void setAxisDisplacement(char axis, float value, uint8_t source);
@@ -203,6 +224,7 @@ void allTargetZero(uint8_t source);
 // Commu.ino
 void bleSendText(const String& msg);
 void setupBLE();
+void handleBLECommand();
 void setupWiFi();
 void handleWiFiCommand();
 void handleSerialCommand();

@@ -1,4 +1,10 @@
 #include "Globals.h"
+#if ENABLE_BLE
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+struct BleQueuedCommand { char text[128]; };
+static QueueHandle_t bleCommandQueue = nullptr;
+#endif
 
 // ============================================================
 // 通信对象和接收缓冲
@@ -53,11 +59,32 @@ class RxCallbacks : public BLECharacteristicCallbacks {
       return;
     }
 
-    handleCommand(cmd, 1);
+    // BLE callbacks run on another task. Only the main loop may access motors/SPI.
+    BleQueuedCommand queued = {};
+    if (cmd.length() >= sizeof(queued.text)) {
+      sendReply(1, "ERR, BLE_COMMAND_TOO_LONG");
+      return;
+    }
+    cmd.toCharArray(queued.text, sizeof(queued.text));
+    if (!bleCommandQueue || xQueueSend(bleCommandQueue, &queued, 0) != pdTRUE) {
+      sendReply(1, "ERR, BLE_COMMAND_QUEUE_FULL");
+    }
   }
 };
 
+void handleBLECommand() {
+  BleQueuedCommand queued;
+  if (bleCommandQueue && xQueueReceive(bleCommandQueue, &queued, 0) == pdTRUE) {
+    handleCommand(String(queued.text), 1);
+  }
+}
+
 void setupBLE() {
+  bleCommandQueue = xQueueCreate(8, sizeof(BleQueuedCommand));
+  if (!bleCommandQueue) {
+    Serial.println("ERR, BLE_COMMAND_QUEUE_ALLOCATION");
+    return;
+  }
   BLEDevice::init(DEVICE_NAME);
 
   bleServer = BLEDevice::createServer();
@@ -88,6 +115,8 @@ void setupBLE() {
 }
 
 #else
+
+void handleBLECommand() {}
 
 void setupBLE() {
   Serial.println("BLE disabled.");

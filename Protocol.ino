@@ -94,15 +94,6 @@ String getStatusText() {
   msg += (sleepB ? "YES" : "NO");
   msg += ", \n";
 
-  msg += "C_pos=";
-  msg += String(getRelativePosC(), 4);
-  msg += ", C_vel=";
-  msg += String(motorC.shaft_velocity, 4);
-  msg += ", C_iq=";
-  msg += String(motorC.current.q, 4);
-  msg += ", C_sleep=";
-  msg += (sleepC ? "YES" : "NO");
-  msg += ",\n";
 
   msg += "Von=";
   msg += String(readVonVoltage(), 2);
@@ -142,6 +133,8 @@ String getSingleAxisStatus(char axis) {
   float targetIq = 0.0f;
   float measuredId = 0.0f;
   float measuredIq = 0.0f;
+  float commandedUd = 0.0f;
+  float commandedUq = 0.0f;
   String limit = "NONE";
   String sleep = "NO";
   String fault = "Perfect";
@@ -159,6 +152,8 @@ String getSingleAxisStatus(char axis) {
     targetIq = targetIqA;
     measuredId = motorA.current.d;
     measuredIq = motorA.current.q;
+    commandedUd = motorA.voltage.d;
+    commandedUq = motorA.voltage.q;
     limit = getAxisLimitText(limitAUpper, limitALower);
     sleep = (sleepA ? "YES" : "NO");
     fault = getAxisFaultBriefText('A');
@@ -175,6 +170,8 @@ String getSingleAxisStatus(char axis) {
     targetIq = targetIqB;
     measuredId = motorB.current.d;
     measuredIq = motorB.current.q;
+    commandedUd = motorB.voltage.d;
+    commandedUq = motorB.voltage.q;
     limit = getAxisLimitText(limitBUpper, limitBLower);
     sleep = (sleepB ? "YES" : "NO");
     fault = getAxisFaultBriefText('B');
@@ -191,6 +188,8 @@ String getSingleAxisStatus(char axis) {
     targetIq = targetIqC;
     measuredId = motorC.current.d;
     measuredIq = motorC.current.q;
+    commandedUd = motorC.voltage.d;
+    commandedUq = motorC.voltage.q;
     limit = getAxisLimitText(limitCUpper, limitCLower);
     sleep = (sleepC ? "YES" : "NO");
     fault = getAxisFaultBriefText('C');
@@ -223,6 +222,10 @@ String getSingleAxisStatus(char axis) {
   msg += String(measuredId, 4);
   msg += ", " + prefix + "_iq=";
   msg += String(measuredIq, 4);
+  msg += ", " + prefix + "_ud=";
+  msg += String(commandedUd, 4);
+  msg += ", " + prefix + "_uq=";
+  msg += String(commandedUq, 4);
   msg += ", \n";
 
   msg += prefix + "_MAX_POS=";
@@ -295,20 +298,37 @@ String getCommInfo() {
 
 
 String getCurrentInfo() {
-  PhaseCurrent_s currentA = currentSenseA.getPhaseCurrents();
-  PhaseCurrent_s currentB = currentSenseB.getPhaseCurrents();
-  PhaseCurrent_s currentC = currentSenseC.getPhaseCurrents();
   String msg = "";
 
-  msg += "A_iu=" + String(currentA.a, 4);
-  msg += ", A_iv=" + String(currentA.b, 4);
-  msg += ", A_iw=" + String(-currentA.a - currentA.b, 4);
-  msg += "\nB_iu=" + String(currentB.a, 4);
-  msg += ", B_iv=" + String(currentB.b, 4);
-  msg += ", B_iw=" + String(-currentB.a - currentB.b, 4);
-  msg += "\nC_iu=" + String(currentC.a, 4);
-  msg += ", C_iv=" + String(currentC.b, 4);
-  msg += ", C_iw=" + String(-currentC.a - currentC.b, 4);
+  if (currentSenseA.initialized && currentSenseA.params != nullptr) {
+    PhaseCurrent_s currentA = currentSenseA.getPhaseCurrents();
+    msg += "A_ia=" + String(currentA.a, 4);
+    msg += ", A_ib=" + String(currentA.b, 4);
+    msg += ", A_ic_reconstructed=" + String(-currentA.a - currentA.b, 4);
+  } else {
+    msg += "A_current=NOT_INITIALIZED";
+  }
+
+  if (currentSenseB.initialized && currentSenseB.params != nullptr) {
+    PhaseCurrent_s currentB = currentSenseB.getPhaseCurrents();
+    msg += "\nB_ia=" + String(currentB.a, 4);
+    msg += ", B_ib=" + String(currentB.b, 4);
+    msg += ", B_ic_reconstructed=" + String(-currentB.a - currentB.b, 4);
+  } else {
+    msg += "\nB_current=NOT_INITIALIZED";
+  }
+#if ENABLE_C_AXIS
+  if (currentSenseC.initialized && currentSenseC.params != nullptr) {
+    PhaseCurrent_s currentC = currentSenseC.getPhaseCurrents();
+    msg += "\nC_ia=" + String(currentC.a, 4);
+    msg += ", C_ib=" + String(currentC.b, 4);
+    msg += ", C_ic_reconstructed=" + String(-currentC.a - currentC.b, 4);
+  } else {
+    msg += "\nC_current=NOT_INITIALIZED";
+  }
+#else
+  msg += "\nC_current=DISABLED";
+#endif
 
   return msg;
 }
@@ -333,12 +353,6 @@ String getLimitInfo() {
   msg += String(B_MAX_POS, 4);
   msg += ",\n";
 
-  msg += "C_MAX_VEL=";
-  msg += String(C_MAX_VEL, 4);
-  msg += ", C_MIN_POS=";
-  msg += String(C_MIN_POS, 4);
-  msg += ", C_MAX_POS=";
-  msg += String(C_MAX_POS, 4);
   msg += ", \n";
 
   msg += "VON_MIN=";
@@ -349,14 +363,22 @@ String getLimitInfo() {
   msg += String(FOC_CURRENT_LIMIT_MAX, 4);
   msg += ", \n";
 
-  msg += "MOTOR_RS=";
-  msg += String(MOTOR_PHASE_RESISTANCE, 4);
-  msg += ", MOTOR_KV=";
-  msg += String(MOTOR_KV_RATING, 2);
-  msg += ", MOTOR_LQ=";
-  msg += String(MOTOR_LQ, 6);
-  msg += ", MOTOR_LD=";
-  msg += String(MOTOR_LD, 6);
+  msg += "MOTOR_A_RS=";
+  msg += String(MOTOR_A_PHASE_RESISTANCE, 4);
+  msg += ", MOTOR_A_KV=";
+  msg += String(MOTOR_A_KV_RATING, 2);
+  msg += ", MOTOR_A_LQ=";
+  msg += String(MOTOR_A_LQ, 6);
+  msg += ", MOTOR_A_LD=";
+  msg += String(MOTOR_A_LD, 6);
+  msg += ",\nMOTOR_B_RS=";
+  msg += String(MOTOR_B_PHASE_RESISTANCE, 4);
+  msg += ", MOTOR_B_KV=";
+  msg += String(MOTOR_B_KV_RATING, 2);
+  msg += ", MOTOR_B_LQ=";
+  msg += String(MOTOR_B_LQ, 6);
+  msg += ", MOTOR_B_LD=";
+  msg += String(MOTOR_B_LD, 6);
   msg += ",\nTORQUE_CONTROL=FOC_CURRENT";
   msg += ", CURRENT_SENSE=INLINE_INA240A2";
   msg += ", SHUNT_OHM=";
@@ -469,6 +491,17 @@ void handleCommand(String cmd, uint8_t source) {
 
   markCommunicationActivity();
 
+  // Reject legacy C-axis commands explicitly; A/B and shared commands remain.
+  if (upperCmd == "STATC?" || upperCmd == "ZC!" ||
+      upperCmd == "WAKEC" || upperCmd == "SLEEPC" ||
+      (upperCmd.length() >= 3 && upperCmd.charAt(1) == 'C' &&
+       (upperCmd.charAt(0) == 'P' || upperCmd.charAt(0) == 'V' ||
+        upperCmd.charAt(0) == 'D' || upperCmd.charAt(0) == 'T' ||
+        upperCmd.charAt(0) == 'I'))) {
+    sendReply(source, "ERR, C_AXIS_REMOVED");
+    return;
+  }
+
   if (upperCmd == "HELLO 5090") {
     sendReply(source, "Hello wxy");
     return;
@@ -504,14 +537,29 @@ void handleCommand(String cmd, uint8_t source) {
     return;
   }
 
+  if (upperCmd == "ZH?") {
+    String msg = "ZEROHERO=03_MT6701_OfficialSSI";
+    msg += ", BUILD=AB_BOOT_ALL0_V1";
+    msg += ", A_single=" + String(sensorA.getMechanicalAngle(), 6);
+    msg += ", A_cont=" + String(sensorA.getAngle(), 6);
+    msg += ", A_turns=" + String(sensorA.getFullRotations());
+    msg += ", A_dir=" + String((int)motorA.sensor_direction);
+    msg += ", A_ezero=" + String(motorA.zero_electric_angle, 6);
+    msg += ", B_single=" + String(sensorB.getMechanicalAngle(), 6);
+    msg += ", B_cont=" + String(sensorB.getAngle(), 6);
+    msg += ", B_turns=" + String(sensorB.getFullRotations());
+    msg += ", B_dir=" + String((int)motorB.sensor_direction);
+    msg += ", B_ezero=" + String(motorB.zero_electric_angle, 6);
+    sendReply(source, msg);
+    return;
+  }
+
   if (upperCmd == "ENC?") {
     String msg = "";
     msg += "sensorA=";
     msg += String(sensorA.getSensorAngle(), 6);
     msg += ", sensorB=";
     msg += String(sensorB.getSensorAngle(), 6);
-    msg += ", sensorC=";
-    msg += String(sensorC.getSensorAngle(), 6);
     sendReply(source, msg);
     return;
   }

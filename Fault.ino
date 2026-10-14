@@ -91,7 +91,7 @@ bool updateFaultLatch() {
 #if ENABLE_FAULT_CHECK
   currentFaultA = digitalRead(PIN_A_FAULT) == LOW;
   currentFaultB = digitalRead(PIN_B_FAULT) == LOW;
-  currentFaultC = digitalRead(PIN_C_FAULT) == LOW;
+  currentFaultC = false; // C removed: floating fault input must not protect A/B.
 
   float von = readVonVoltage();
   currentVonFault = (von < VON_MIN || von > VON_MAX);

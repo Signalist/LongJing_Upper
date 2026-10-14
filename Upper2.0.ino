@@ -64,12 +64,11 @@
 // 9、数据单位
 //    位置/角度：rad；速度：rad/s；电压：V；电流：A.
 //
-// 10、编码器角度接口说明：
-//    getSensorAngle()：对应 CS 置 0 访问编码器硬件，返回当前的单圈机械角，范围 0～2π。
-//    sensor.update()：调用 getSensorAngle，并根据前后两次读数更新单圈角、累计圈数以及角速度。
-//    getMechanicalAngle()： 返回最近一次 sensor.update 后的单圈机械角，范围 0～2π。
-//    getAngle() 基于 sensor.update 更新后的单圈角和圈数信息，返回连续的多圈机械角，可大于 2π 或小于 0。
-//    编码器读数 0 或 2π 很可能是悬空带来的全 0 或全 1
+// 10、ZeroHero angle interfaces:
+//    getSensorAngle(): hardware single-turn angle, [0, 2PI).
+//    update(): sample sensor; getMechanicalAngle(): cached single-turn angle.
+//    getAngle(): continuous during initFOC and runtime.
+//    A legitimate angle of zero must not be discarded.
 //      
 // ============================================================
 
@@ -130,12 +129,12 @@ void setup()
   Serial.println("V");
 
   // Encoder 串口通信与初始化，打印初始角度
+  Serial.println("ZEROHERO: 03_MT6701_OfficialSSI");
   Serial.println("Initializing snesors...");
   spiBus.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
   delay(100);
   sensorA.init();
   sensorB.init();
-  sensorC.init();
   Serial.print("Sensor A single=");
   Serial.print(sensorA.getSensorAngle(), 6);
   Serial.print(", multi=");
@@ -144,35 +143,59 @@ void setup()
   Serial.print(sensorB.getSensorAngle(), 6);
   Serial.print(", multi=");
   Serial.println(sensorB.getAngle(), 6);
-  Serial.print("Sensor C single=");
-  Serial.print(sensorC.getSensorAngle(), 6);
-  Serial.print(", multi=");
-  Serial.println(sensorC.getAngle(), 6);
 
   // Driver 初始化
   Serial.println("Initializing drivers...");
   digitalWrite(PIN_A_SLEEP, HIGH);
   digitalWrite(PIN_B_SLEEP, HIGH);
-  digitalWrite(PIN_C_SLEEP, HIGH);
-  Serial.println("All drivers wake");
+  digitalWrite(PIN_C_SLEEP, LOW);
+  Serial.println("Drivers A/B wake; C disabled");
   delay(100);
   setupDriver(driverA);
   setupDriver(driverB);
-  setupDriver(driverC);
   Serial.println("PWM available");
 
   // Motor 初始化
   Serial.println("Initializing motors...");
-  bool motorAReady = setupMotor(motorA, driverA, sensorA, currentSenseA, A_MAX_VEL);
-  bool motorBReady = setupMotor(motorB, driverB, sensorB, currentSenseB, B_MAX_VEL);
-  bool motorCReady = setupMotor(motorC, driverC, sensorC, currentSenseC, C_MAX_VEL);
+
+  // A performs the complete SimpleFOC calibration on every boot.
+  motorA.voltage_sensor_align = MOTOR_A_ALIGN_VOLTAGE;
+  Serial.print("A full init: PP=11 reference, align voltage=");
+  Serial.print(motorA.voltage_sensor_align, 2);
+  Serial.println("V, diagnostic build=ALIGN_MOVE_V1");
+  // New SSI framing requires fresh direction/electrical-zero calibration.
+  motorB.sensor_direction = Direction::UNKNOWN;
+  motorB.zero_electric_angle = NOT_SET;
+  currentSenseB.skip_align = true;
+
+  bool motorAReady = setupMotor(motorA, driverA, sensorA, currentSenseA, A_MAX_VEL,
+                                A_VELOCITY_PID_DEFAULT, A_POSITION_PID_DEFAULT,
+                                A_CURRENT_PID_DEFAULT, true);
+  bool motorBReady = setupMotor(motorB, driverB, sensorB, currentSenseB, B_MAX_VEL,
+                                B_VELOCITY_PID_DEFAULT, B_POSITION_PID_DEFAULT,
+                                B_CURRENT_PID_DEFAULT, true);
+  bool motorCReady = false;
   loadPidValuesFromFlash();
+  Serial.print("A position PID: P=");
+  Serial.print(motorA.PID_angle.P, 4);
+  Serial.print(", I=");
+  Serial.print(motorA.PID_angle.I, 4);
+  Serial.print(", D=");
+  Serial.println(motorA.PID_angle.D, 4);
+  Serial.print("B position PID: P=");
+  Serial.print(motorB.PID_angle.P, 4);
+  Serial.print(", I=");
+  Serial.print(motorB.PID_angle.I, 4);
+  Serial.print(", D=");
+  Serial.println(motorB.PID_angle.D, 4);
   Serial.print("FOC ready: A=");
   Serial.print(motorAReady);
   Serial.print(", B=");
   Serial.print(motorBReady);
   Serial.print(", C=");
   Serial.println(motorCReady);
+  Serial.println("A torque control: FOC_CURRENT (full init and ADC measured)");
+  Serial.println("B torque control: FOC_CURRENT (ADC measured)");
   targetVelA = 0.0f;
   targetVelB = 0.0f;
   targetVelC = 0.0f;
@@ -194,15 +217,40 @@ void setup()
   sleepC = !motorCReady;
   Serial.println("Closed-loop available");
   
-  // motorA.target = getAbsoluteTargetA(0.0f);  // 相对0位角度改为绝对角度
-  motorB.target = getAbsoluteTargetB(0.0f);
-  // motorC.target = getAbsoluteTargetC(0.0f);
+  // Start closed-loop control by holding the post-calibration position rather
+  // than immediately chasing an old zero offset stored in flash.
+  targetPosA = getRelativePosA();
+  targetPosB = getRelativePosB();
+  motorA.target = motorA.shaftAngle();
+  motorB.target = motorB.shaftAngle();
+  motorA.PID_angle.reset();
+  motorB.PID_angle.reset();
+  motorA.PID_velocity.reset();
+  motorB.PID_velocity.reset();
+  Serial.print("A position start: current=");
+  Serial.print(targetPosA, 6);
+  Serial.print(", target=");
+  Serial.println(targetPosA, 6);
+  Serial.print("B position start: current=");
+  Serial.print(targetPosB, 6);
+  Serial.print(", target=");
+  Serial.println(targetPosB, 6);
   Serial.println("Motors under control");
 
   // 无线通信初始化
   Serial.println("Initializing communicators...");
   setupBLE();
   setupWiFi();
+
+  // Same target operation as the ALL0 command, after calibration and NVS load.
+  // initFOC failure must not start automatic homing.
+  if (motorAReady && motorBReady) {
+    allTargetZero(0);
+    Serial.println("BOOT_ALL0: A/B mechanical-zero targets queued.");
+  } else {
+    sleepAllAxis();
+    Serial.println("ERR, BOOT_ALL0_INIT_FAILED");
+  }
 
    // 此处原本是做自启动控制，但发现 Sleep 状态无法完成 motor.initFOC()，遂废弃
 // #if AUTO_WAKE_ON_BOOT
@@ -252,13 +300,8 @@ void loop()
                  targetVelB,
                  getAbsoluteTargetB(targetPosB),
                  targetIqB);
-  runAxisControl(motorC,
-                 sleepC,
-                 modeC,
-                 targetVelC,
-                 getAbsoluteTargetC(targetPosC),
-                 targetIqC);
 
+  handleBLECommand();
   handleSerialCommand();
   handleWiFiCommand();
 

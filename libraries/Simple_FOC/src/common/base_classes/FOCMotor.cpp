@@ -884,6 +884,9 @@ int FOCMotor::alignSensor() {
     _delay(200);
     // determine the direction the sensor moved
     float moved =  fabs(mid_angle - end_angle);
+    SIMPLEFOC_MOTOR_DEBUG("align mid angle: ", mid_angle);
+    SIMPLEFOC_MOTOR_DEBUG("align end angle: ", end_angle);
+    SIMPLEFOC_MOTOR_DEBUG("align moved: ", moved);
     if (moved<MIN_ANGLE_DETECT_MOVEMENT) { // minimum angle to detect movement
       SIMPLEFOC_MOTOR_ERROR("Failed to notice movement");
       return 0; // failed calibration

@@ -213,6 +213,9 @@ int CurrentSense::alignBLDCDriver(float voltage, BLDCDriver* bldc_driver, bool m
     _delay(500);
     PhaseCurrent_s c_a = readAverageCurrents();
     bldc_driver->setPwm(zero, zero, zero);
+    SIMPLEFOC_DEBUG("CS align A ia: ", c_a.a);
+    SIMPLEFOC_DEBUG("CS align A ib: ", c_a.b);
+    SIMPLEFOC_DEBUG("CS align A ic: ", c_a.c);
     // check if currents are to low (lower than 100mA) 
     // TODO calculate the 100mA threshold from the ADC resolution
     // if yes throw an error and return 0
@@ -324,6 +327,15 @@ int CurrentSense::alignBLDCDriver(float voltage, BLDCDriver* bldc_driver, bool m
     _delay(500);
     PhaseCurrent_s c_b = readAverageCurrents();
     bldc_driver->setPwm(zero, zero, zero);
+    SIMPLEFOC_DEBUG("CS align B ia: ", c_b.a);
+    SIMPLEFOC_DEBUG("CS align B ib: ", c_b.b);
+    SIMPLEFOC_DEBUG("CS align B ic: ", c_b.c);
+    // With two-shunt sensing the original alignment logic can incorrectly
+    // return success when phase-B excitation produces no measurable current.
+    if((fabs(c_b.a) < 0.1f) && (fabs(c_b.b) < 0.1f) && (fabs(c_b.c) < 0.1f)){
+        SIMPLEFOC_DEBUG("CS: Err too low current on phase B!");
+        return 0;
+    }
 
     // check the phase B
     // find the highest magnitude in c_b
@@ -731,5 +743,3 @@ int CurrentSense::alignHybridDriver(float voltage, BLDCDriver* bldc_driver, bool
     if(phases_inverted) exit_flag += 2;
     return exit_flag;
 }
-
-

@@ -6,6 +6,10 @@
 
 Preferences zeroPrefs;
 
+static float normalizeSingleTurnPosition(float position) {
+  return zerohero::positive(position);
+}
+
 float homeAOffset = 0.0f;
 float homeBOffset = 0.0f;
 float homeCOffset = 0.0f;
@@ -21,7 +25,7 @@ static const uint8_t ZERO_COORD_ALL =
 static uint8_t zeroCoordMask = 0;
 
 void loadZeroOffsetsFromFlash() {
-  zeroPrefs.begin("zero", false);
+  zeroPrefs.begin("zh_ssi", false);
 
   homeAOffset = zeroPrefs.getFloat("A_offset", 0.0f);
   homeBOffset = zeroPrefs.getFloat("B_offset", 0.0f);
@@ -103,21 +107,19 @@ void printZeroOffsetsAtBoot() {
 float getRelativePosA() {
   ensureShaftCoordinateOffset('A');
   sensorA.update();
-  return motorA.shaftAngle() - homeAOffset;
+  return normalizeSingleTurnPosition(motorA.shaftAngle() - homeAOffset);
 }
 
 
 float getRelativePosB() {
   ensureShaftCoordinateOffset('B');
   sensorB.update();
-  return motorB.shaftAngle() - homeBOffset;
+  return normalizeSingleTurnPosition(motorB.shaftAngle() - homeBOffset);
 }
 
 
 float getRelativePosC() {
-  ensureShaftCoordinateOffset('C');
-  sensorC.update();
-  return motorC.shaftAngle() - homeCOffset;
+  return 0.0f; // C removed: never sample an uninitialized encoder.
 }
 
 
@@ -146,21 +148,19 @@ String getCalibrationInfo() {
   msg += String(homeAOffset, 6);
   msg += ", B_offset=";
   msg += String(homeBOffset, 6);
-  msg += ", C_offset=";
-  msg += String(homeCOffset, 6);
 
   return msg;
 }
 
 
 String setCurrentPositionAsZero(char axis) {
+  if (axis == 'C') return "ERR, C_AXIS_REMOVED";
   if ((axis == 'A' && motorA.sensor_direction == Direction::UNKNOWN) ||
       (axis == 'B' && motorB.sensor_direction == Direction::UNKNOWN) ||
       (axis == 'C' && motorC.sensor_direction == Direction::UNKNOWN) ||
       (axis != 'A' && axis != 'B' && axis != 'C' &&
        (motorA.sensor_direction == Direction::UNKNOWN ||
-        motorB.sensor_direction == Direction::UNKNOWN ||
-        motorC.sensor_direction == Direction::UNKNOWN))) {
+        motorB.sensor_direction == Direction::UNKNOWN))) {
     return "ERR, ZERO_SENSOR_DIRECTION_UNKNOWN";
   }
 
@@ -193,25 +193,18 @@ String setCurrentPositionAsZero(char axis) {
     homeAOffset = motorA.shaftAngle();
     sensorB.update();
     homeBOffset = motorB.shaftAngle();
-    sensorC.update();
-    homeCOffset = motorC.shaftAngle();
-
     targetPosA = 0.0f;
     targetPosB = 0.0f;
     targetPosC = 0.0f;
 
     motorA.target = homeAOffset;
     motorB.target = homeBOffset;
-    motorC.target = homeCOffset;
 
     motorA.PID_angle.reset();
     motorA.PID_velocity.reset();
     motorB.PID_angle.reset();
     motorB.PID_velocity.reset();
-    motorC.PID_angle.reset();
-    motorC.PID_velocity.reset();
-
-    zeroCoordMask = ZERO_COORD_ALL;
+    zeroCoordMask |= ZERO_COORD_A | ZERO_COORD_B;
   }
 
   saveZeroOffsetsToFlash();

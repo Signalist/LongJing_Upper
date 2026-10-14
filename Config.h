@@ -36,30 +36,65 @@
 // ============================================================
 
 // 电机极对数
-#define MOTOR_A_POLE_PAIRS         7
+#define MOTOR_A_POLE_PAIRS         11
 #define MOTOR_B_POLE_PAIRS         7
-#define MOTOR_C_POLE_PAIRS         7
+#define MOTOR_C_POLE_PAIRS         11
+#define ENABLE_C_AXIS              0
+
+// Fixed calibration captured with axes unloaded and PP check passing.
+// Recalibrate these values if phase wiring or encoder mounting changes.
+#define MOTOR_A_SENSOR_DIRECTION   Direction::CCW
+#define MOTOR_A_ZERO_ELEC_ANGLE    2.28f
+#define MOTOR_B_SENSOR_DIRECTION   Direction::CCW
+#define MOTOR_B_ZERO_ELEC_ANGLE    4.41f
 
 // 
 #define POWER_SUPPLY_VOLTAGE       15.0f
-#define FOC_VOLTAGE_LIMIT_DEFAULT  3.0f
+#define FOC_VOLTAGE_LIMIT_DEFAULT  12.0f      // 初始 VF
 #define FOC_VOLTAGE_LIMIT_MAX      14.0f
 #define PWM_FREQUENCY              25000
 
-// 2804 motor parameters used by SimpleFOC current and motion control
-#define MOTOR_PHASE_RESISTANCE     2.55f      // Ohm, phase resistance (line-to-line is about 5.1 Ohm)
-#define MOTOR_KV_RATING            220.0f     // rpm/V
-#define MOTOR_LQ                   0.00086f   // H
-#define MOTOR_LD                   0.00086f   // H, no separate Ld measurement available
-#define FOC_CURRENT_LIMIT_DEFAULT  0.20f      // A, startup current limit
-#define FOC_CURRENT_LIMIT_MAX      2.00f      // A, maximum value accepted by IF command
+// 3510 motor parameters used by SimpleFOC current and motion control (axes A/C)
+#define MOTOR_A_PHASE_RESISTANCE   8.80f      // Ohm
+#define MOTOR_A_KV_RATING          45.0f      // rpm/V
+#define MOTOR_A_LQ                 0.00395f   // H
+#define MOTOR_A_LD                 0.00395f   // H
+#define MOTOR_A_ALIGN_VOLTAGE      6.00f      // V, about 0.68 A at standstill (short calibration only)
+
+// 2804 motor parameters used by SimpleFOC current and motion control (axis B)
+#define MOTOR_B_PHASE_RESISTANCE   2.55f      // Ohm, phase resistance (line-to-line is about 5.1 Ohm)
+#define MOTOR_B_KV_RATING          220.0f     // rpm/V
+#define MOTOR_B_LQ                 0.00086f   // H
+#define MOTOR_B_LD                 0.00086f   // H
+
+#define MOTOR_C_PHASE_RESISTANCE   MOTOR_A_PHASE_RESISTANCE
+#define MOTOR_C_KV_RATING          MOTOR_A_KV_RATING
+#define MOTOR_C_LQ                 MOTOR_A_LQ
+#define MOTOR_C_LD                 MOTOR_A_LD
+
+#define FOC_CURRENT_LIMIT_DEFAULT  0.50f      // 初始 IF
+#define FOC_CURRENT_LIMIT_MAX      1.00f      // A, maximum value accepted by IF command
 
 // INA240A2 inline phase-current sensing: 20 mOhm shunt, gain 50 V/V.
 #define CURRENT_SHUNT_RESISTANCE   0.020f
 #define CURRENT_SENSE_GAIN         50.0f
-#define CURRENT_PID_P              3.0f
-#define CURRENT_PID_I              300.0f
 #define CURRENT_LPF_TF             0.002f
+
+// Default motion-loop PID values: {P, I, D}.
+// Values saved in NVS take precedence over these defaults at startup.
+static constexpr float A_VELOCITY_PID_DEFAULT[3] = {0.10f, 0.20f, 0.0f};
+static constexpr float B_VELOCITY_PID_DEFAULT[3] = {0.10f, 0.20f, 0.0f};
+static constexpr float C_VELOCITY_PID_DEFAULT[3] = {0.10f, 0.20f, 0.0f};
+
+// Hardware-tuned cascade position loop: velocity PI supplies steady-state torque.
+// High angle D amplifies encoder quantization; use a moderate pure P outer loop.
+static constexpr float A_POSITION_PID_DEFAULT[3] = {16.0f, 0.0f, 0.0f};
+static constexpr float B_POSITION_PID_DEFAULT[3] = {30.0f, 4.0f, 2.0f};
+static constexpr float C_POSITION_PID_DEFAULT[3] = {6.0f, 0.0f, 0.0f};
+
+static constexpr float A_CURRENT_PID_DEFAULT[3] = {3.0f, 300.0f, 0.0f};
+static constexpr float B_CURRENT_PID_DEFAULT[3] = {3.0f, 300.0f, 0.0f};
+static constexpr float C_CURRENT_PID_DEFAULT[3] = {3.0f, 300.0f, 0.0f};
 
 // 速度限制，单位 rad/s
 #define A_MAX_VEL                  6.28f
@@ -67,12 +102,12 @@
 #define C_MAX_VEL                  6.28f
 
 // 位置软限位，单位 rad，相对于零位
-#define A_MIN_POS                 -800.0f
-#define A_MAX_POS                  800.0f
-#define B_MIN_POS                 -800.0f
-#define B_MAX_POS                  800.0f
-#define C_MIN_POS                 -800.0f
-#define C_MAX_POS                  800.0f
+#define A_MIN_POS                   0.0f
+#define A_MAX_POS                   6.28318530718f
+#define B_MIN_POS                   0.0f
+#define B_MAX_POS                   6.28318530718f
+#define C_MIN_POS                   0.0f
+#define C_MAX_POS                   6.28318530718f
 
 // 母线电压保护阈值
 #define VON_MIN                    8.0f
