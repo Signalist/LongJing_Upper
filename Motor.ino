@@ -1,4 +1,5 @@
 #include "Globals.h"
+#include "position_limits.h"
 
 // ============================================================
 // 电机对象定义
@@ -23,6 +24,9 @@ InlineCurrentSense currentSenseC(CURRENT_SHUNT_RESISTANCE, CURRENT_SENSE_GAIN,
 // 当前 FOC 最大输出电压，运行时可由 VF 指令修改，断电后恢复默认值
 float Vfoc = FOC_VOLTAGE_LIMIT_DEFAULT;
 float Ifoc = FOC_CURRENT_LIMIT_DEFAULT;
+// ALIMIT changes RAM only. Restart restores Config.h defaults.
+float aMinPos = A_MIN_POS;
+float aMaxPos = A_MAX_POS;
 
 // PID gains are persisted in ESP32 NVS. The values in setupMotor() are used
 // only when no saved value exists yet.
@@ -470,17 +474,36 @@ String getAxisLimitText(bool upper, bool lower) {
 
 
 void applyPositionSoftLimit() {
-  // A single-turn angle is cyclic. There is no physical upper/lower stop at
-  // 0/2PI, so velocity and torque commands must be allowed to cross zero.
-  limitAUpper = false;
-  limitALower = false;
-  limitBUpper = false;
-  limitBLower = false;
+  const float positionA = getRelativePosA();
+  const float positionB = getRelativePosB();
+  limitAUpper = positionA >= aMaxPos;
+  limitALower = positionA <= aMinPos;
+  limitBUpper = positionB >= B_MAX_POS;
+  limitBLower = positionB <= B_MIN_POS;
   limitCUpper = false;
   limitCLower = false;
   return;
 }
 
+
+String setAPositionLimits(float lower, float upper) {
+  if (!position_limits::valid(lower, upper)) return "ERR, ALIMIT_RANGE, REQUIRE_LOWER_LT_UPPER";
+  if (!sleepA) return "ERR, ALIMIT_REQUIRES_SLEEPA";
+  if (motorA.sensor_direction == Direction::UNKNOWN) return "ERR, ALIMIT_SENSOR_DIRECTION_UNKNOWN";
+  const float position = getRelativePosA();
+  // Reject shrinking past the actual position; do not arm a boundary recovery move.
+  if (!position_limits::contains(position, lower, upper)) return "ERR, ALIMIT_CURRENT_POSITION_OUTSIDE";
+  aMinPos = lower;
+  aMaxPos = upper;
+  targetPosA = zerohero::boundedPosition(targetPosA, aMinPos, aMaxPos);
+  motorA.target = getAbsoluteTargetA(targetPosA);
+  motorA.PID_angle.reset();
+  motorA.PID_velocity.reset();
+  limitAUpper = position >= aMaxPos;
+  limitALower = position <= aMinPos;
+  return String("OK, ALIMIT SET, lower=") + String(aMinPos, 6) +
+         ", upper=" + String(aMaxPos, 6);
+}
 
 void setupDriver(BLDCDriver3PWM& driver) {
   driver.voltage_power_supply = POWER_SUPPLY_VOLTAGE;
@@ -575,22 +598,50 @@ void runAxisControl(BLDCMotor& motor,
 
   motor.loopFOC();
 
+  const bool isA = &motor == &motorA;
+  const float position = isA ? getRelativePosA() : getRelativePosB();
+  const float lower = isA ? aMinPos : B_MIN_POS;
+  const float upper = isA ? aMaxPos : B_MAX_POS;
+  const float demand = axisMode == AXIS_MODE_VELOCITY ? velocityTarget : torqueCurrentTarget;
+  static bool limitedA = false;
+  static bool limitedB = false;
+  bool& wasLimited = isA ? limitedA : limitedB;
+  // A software travel limit is not a hard mechanical stop. At/beyond a limit,
+  // replace an outward velocity/torque demand with position holding/braking.
+  if (position > upper || position < lower ||
+      (axisMode != AXIS_MODE_POSITION &&
+       zerohero::outwardAtLimit(position, demand, lower, upper))) {
+    const float boundary = zerohero::boundedPosition(position, lower, upper);
+    if (!wasLimited) {
+      motor.PID_angle.reset();
+      motor.PID_velocity.reset();
+    }
+    wasLimited = true;
+    motor.updateMotionControlType(MotionControlType::angle);
+    motor.move(isA ? getAbsoluteTargetA(boundary) : getAbsoluteTargetB(boundary));
+    return;
+  }
+  wasLimited = false;
+
   if (axisMode == AXIS_MODE_VELOCITY) {
+    motor.updateMotionControlType(MotionControlType::velocity);
     motor.move(velocityTarget);
   } else if (axisMode == AXIS_MODE_TORQUE) {
+    motor.updateMotionControlType(MotionControlType::torque);
     motor.move(torqueCurrentTarget);
   } else {
-    float currentAngle = motor.shaftAngle();
-    float error = absolutePositionTarget - currentAngle;
-    error = zerohero::difference(error);
-    // Give SimpleFOC an equivalent target nearest to the measured angle so
-    // its PID sees the circular shortest-path error, not a 2PI jump.
-    motor.move(currentAngle + error);
+    motor.updateMotionControlType(MotionControlType::angle);
+    // Continuous target: +2PI, zero, and -2PI are three distinct positions.
+    motor.move(absolutePositionTarget);
   }
 }
 
 
 void setAxisTorqueCurrent(char axis, float value, uint8_t source) {
+  if (!isfinite(value)) {
+    sendReply(source, "ERR, NONFINITE_COMMAND");
+    return;
+  }
   // FOC current mode: move() receives the requested q-axis current in A.
   float iq = constrain(value, -Ifoc, Ifoc);
 
@@ -625,6 +676,10 @@ void setAxisTorqueCurrent(char axis, float value, uint8_t source) {
 
 
 void setAxisVelocity(char axis, float value, uint8_t source) {
+  if (!isfinite(value)) {
+    sendReply(source, "ERR, NONFINITE_COMMAND");
+    return;
+  }
   if (axis == 'A') {
     modeA = AXIS_MODE_VELOCITY;
     motorA.updateTorqueControlType(TorqueControlType::foc_current);
@@ -674,10 +729,14 @@ static void enterPositionMode(BLDCMotor& motor,
 
 
 void setAxisPosition(char axis, float value, uint8_t source) {
+  if (!isfinite(value)) {
+    sendReply(source, "ERR, NONFINITE_POSITION");
+    return;
+  }
   if (axis == 'A') {
     enterPositionMode(motorA, modeA, TorqueControlType::foc_current);
     targetIqA = 0.0f;
-    targetPosA = constrain(value, A_MIN_POS, A_MAX_POS);
+    targetPosA = constrain(value, aMinPos, aMaxPos);
     motorA.target = getAbsoluteTargetA(targetPosA);
     sendReply(source, "OK, PA=" + String(targetPosA, 4));
   } else if (axis == 'B') {
@@ -699,16 +758,20 @@ void setAxisPosition(char axis, float value, uint8_t source) {
 
 
 void setAxisDisplacement(char axis, float value, uint8_t source) {
+  if (!isfinite(value)) {
+    sendReply(source, "ERR, NONFINITE_POSITION");
+    return;
+  }
   if (axis == 'A') {
     enterPositionMode(motorA, modeA, TorqueControlType::foc_current);
     targetIqA = 0.0f;
-    targetPosA = zerohero::positive(getRelativePosA() + value);
+    targetPosA = zerohero::boundedPosition(getRelativePosA() + value, aMinPos, aMaxPos);
     motorA.target = getAbsoluteTargetA(targetPosA);
     sendReply(source, "OK, PA=" + String(targetPosA, 4));
   } else if (axis == 'B') {
     enterPositionMode(motorB, modeB, TorqueControlType::foc_current);
     targetIqB = 0.0f;
-    targetPosB = zerohero::positive(getRelativePosB() + value);
+    targetPosB = zerohero::boundedPosition(getRelativePosB() + value, B_MIN_POS, B_MAX_POS);
     motorB.target = getAbsoluteTargetB(targetPosB);
     sendReply(source, "OK, PB=" + String(targetPosB, 4));
   } else if (axis == 'C') {

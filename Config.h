@@ -101,10 +101,15 @@ static constexpr float C_CURRENT_PID_DEFAULT[3] = {3.0f, 300.0f, 0.0f};
 #define B_MAX_VEL                  6.28f
 #define C_MAX_VEL                  6.28f
 
-// 位置软限位，单位 rad，相对于零位
-#define A_MIN_POS                   0.0f
-#define A_MAX_POS                   6.28318530718f
-#define B_MIN_POS                   0.0f
+// Continuous position limits relative to the boot-selected mechanical home.
+// Signed positions are distinct; historical turns are not restored.
+// A limits were re-measured in the original PA frame (home 1.308486 rad).
+// The temporary REBASEA+1 offset is no longer present; do not subtract it again.
+// They are NOT absolute cable-travel protection after a power-cycle/rebase.
+// Startup defaults; ALIMIT<lower,upper> updates the A limits in RAM only.
+#define A_MIN_POS                  -7.2f
+#define A_MAX_POS                   4.3f
+#define B_MIN_POS                  -6.28318530718f
 #define B_MAX_POS                   6.28318530718f
 #define C_MIN_POS                   0.0f
 #define C_MAX_POS                   6.28318530718f

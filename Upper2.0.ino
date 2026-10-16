@@ -69,6 +69,13 @@
 //    update(): sample sensor; getMechanicalAngle(): cached single-turn angle.
 //    getAngle(): continuous during initFOC and runtime.
 //    A legitimate angle of zero must not be discarded.
+//    PA/PB: continuous signed targets; A defaults [-7.2,+4.3], B [-2PI,+2PI] rad.
+//    ALIMIT<lower,upper>: RAM-only A travel limits, changed while A sleeps.
+//    No shortest-path wrapping. A's measured cable limits require the same
+//    runtime coordinate branch; a power cycle/rebase cannot recover cable turns.
+//    DA/DB: displacement from measured continuous position, clamped to limits.
+//    Each boot selects the nearest saved mechanical home as turn zero; ALL0
+//    returns to it. ZERO! persists only home phase, not historical turn count.
 //      
 // ============================================================
 

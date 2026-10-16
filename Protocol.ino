@@ -1,4 +1,5 @@
 #include "Globals.h"
+#include "position_limits.h"
 
 void sendReply(uint8_t source, const String& msg) {
   String out = getTimestampHeader();
@@ -157,8 +158,8 @@ String getSingleAxisStatus(char axis) {
     limit = getAxisLimitText(limitAUpper, limitALower);
     sleep = (sleepA ? "YES" : "NO");
     fault = getAxisFaultBriefText('A');
-    maxPos = A_MAX_POS;
-    minPos = A_MIN_POS;
+    maxPos = aMaxPos;
+    minPos = aMinPos;
     maxVel = A_MAX_VEL;
   } else if (axis == 'B') {
     prefix = "B";
@@ -340,9 +341,9 @@ String getLimitInfo() {
   msg += "A_MAX_VEL=";
   msg += String(A_MAX_VEL, 4);
   msg += ", A_MIN_POS=";
-  msg += String(A_MIN_POS, 4);
+  msg += String(aMinPos, 4);
   msg += ", A_MAX_POS=";
-  msg += String(A_MAX_POS, 4);
+  msg += String(aMaxPos, 4);
   msg += ",\n";
 
   msg += "B_MAX_VEL=";
@@ -538,8 +539,10 @@ void handleCommand(String cmd, uint8_t source) {
   }
 
   if (upperCmd == "ZH?") {
+    const float relativeA = getRelativePosA();
+    const float relativeB = getRelativePosB();
     String msg = "ZEROHERO=03_MT6701_OfficialSSI";
-    msg += ", BUILD=AB_BOOT_ALL0_V1";
+    msg += ", BUILD=AB_MULTITURN_LIMITS_V2, POSITION_MODE=MULTITURN";
     msg += ", A_single=" + String(sensorA.getMechanicalAngle(), 6);
     msg += ", A_cont=" + String(sensorA.getAngle(), 6);
     msg += ", A_turns=" + String(sensorA.getFullRotations());
@@ -550,6 +553,11 @@ void handleCommand(String cmd, uint8_t source) {
     msg += ", B_turns=" + String(sensorB.getFullRotations());
     msg += ", B_dir=" + String((int)motorB.sensor_direction);
     msg += ", B_ezero=" + String(motorB.zero_electric_angle, 6);
+    // Raw sensor turns include calibration; use rel_pos for command coordinates.
+    msg += ", A_rel_pos=" + String(relativeA, 6);
+    msg += ", B_rel_pos=" + String(relativeB, 6);
+    msg += ", A_control_turns=" + String((int)(relativeA / _2PI));
+    msg += ", B_control_turns=" + String((int)(relativeB / _2PI));
     sendReply(source, msg);
     return;
   }
@@ -581,6 +589,16 @@ void handleCommand(String cmd, uint8_t source) {
 
   if (upperCmd == "LIMIT?") {
     sendReply(source, getLimitInfo());
+    return;
+  }
+
+  if (upperCmd.startsWith("ALIMIT")) {
+    float lower, upper;
+    if (!position_limits::parse(rawCmd.substring(6).c_str(), lower, upper)) {
+      sendReply(source, "ERR, ALIMIT_FORMAT, USE_ALIMIT<lower,upper>");
+      return;
+    }
+    sendReply(source, setAPositionLimits(lower, upper));
     return;
   }
 
@@ -702,6 +720,13 @@ void handleCommand(String cmd, uint8_t source) {
 
   if (upperCmd == "ZERO?") {
     sendReply(source, getCalibrationInfo());
+    return;
+  }
+
+  if (upperCmd == "REBASEA+1" || upperCmd == "REBASEA-1" ||
+      upperCmd == "REBASEB+1" || upperCmd == "REBASEB-1") {
+    sendReply(source, rebaseRuntimeTurn(upperCmd.charAt(6),
+                                      upperCmd.charAt(7) == '+' ? 1 : -1));
     return;
   }
 

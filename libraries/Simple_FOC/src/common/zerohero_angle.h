@@ -12,6 +12,18 @@ inline float positive(float value) {
 inline float difference(float value) {
     return positive(value + pi) - pi;
 }
+// A new boot knows only the physical single-turn home, not historical turns.
+// Select that home's nearest equivalent once; never rebase it during operation.
+inline float nearestHome(float shaft, float storedHome) {
+    return shaft - difference(shaft - storedHome);
+}
+inline float boundedPosition(float value, float lower, float upper) {
+    return fminf(upper, fmaxf(lower, value));
+}
+inline bool outwardAtLimit(float position, float demand, float lower, float upper) {
+    return (position >= upper && demand > 0) ||
+           (position <= lower && demand < 0);
+}
 inline int32_t rotationsAfterSample(float previous, float current, int32_t rotations) {
     float delta = current - previous;
     if (delta > pi) --rotations;

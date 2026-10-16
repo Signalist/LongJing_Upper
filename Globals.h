@@ -97,6 +97,8 @@ extern float homeCOffset;
 
 extern float Vfoc;
 extern float Ifoc;
+extern float aMinPos;
+extern float aMaxPos;
 
 extern uint8_t modeA;
 extern uint8_t modeB;
@@ -176,6 +178,7 @@ float getAbsoluteTargetB(float relativeTarget);
 float getAbsoluteTargetC(float relativeTarget);
 String getCalibrationInfo();
 String setCurrentPositionAsZero(char axis);
+String rebaseRuntimeTurn(char axis, int turns);
 
 // Fault.ino
 float readVonVoltage();
@@ -205,6 +208,7 @@ void sleepAllAxis();
 bool wakeAllAxis();
 String getAxisLimitText(bool upper, bool lower);
 void applyPositionSoftLimit();
+String setAPositionLimits(float lower, float upper);
 void setupDriver(BLDCDriver3PWM& driver);
 bool setupMotor(BLDCMotor& motor,
                 BLDCDriver3PWM& driver,

@@ -6,9 +6,11 @@
 
 Preferences zeroPrefs;
 
-static float normalizeSingleTurnPosition(float position) {
-  return zerohero::positive(position);
-}
+// RAM only: calibration/startup turns and previous boots never select a home turn.
+static float runtimeHomeA = 0.0f;
+static float runtimeHomeB = 0.0f;
+static bool runtimeHomeAReady = false;
+static bool runtimeHomeBReady = false;
 
 float homeAOffset = 0.0f;
 float homeBOffset = 0.0f;
@@ -79,8 +81,8 @@ static bool ensureShaftCoordinateOffset(char axis) {
     return false;
   }
 
-  *homeOffset =
-      (float)motor->sensor_direction * *homeOffset - motor->sensor_offset;
+  *homeOffset = zerohero::positive(
+      (float)motor->sensor_direction * *homeOffset - motor->sensor_offset);
   zeroCoordMask |= axisBit;
   saveZeroOffsetsToFlash();
 
@@ -105,16 +107,24 @@ void printZeroOffsetsAtBoot() {
 
 
 float getRelativePosA() {
-  ensureShaftCoordinateOffset('A');
+  if (!ensureShaftCoordinateOffset('A')) return 0.0f;
   sensorA.update();
-  return normalizeSingleTurnPosition(motorA.shaftAngle() - homeAOffset);
+  if (!runtimeHomeAReady) {
+    runtimeHomeA = zerohero::nearestHome(motorA.shaftAngle(), homeAOffset);
+    runtimeHomeAReady = true;
+  }
+  return motorA.shaftAngle() - runtimeHomeA;
 }
 
 
 float getRelativePosB() {
-  ensureShaftCoordinateOffset('B');
+  if (!ensureShaftCoordinateOffset('B')) return 0.0f;
   sensorB.update();
-  return normalizeSingleTurnPosition(motorB.shaftAngle() - homeBOffset);
+  if (!runtimeHomeBReady) {
+    runtimeHomeB = zerohero::nearestHome(motorB.shaftAngle(), homeBOffset);
+    runtimeHomeBReady = true;
+  }
+  return motorB.shaftAngle() - runtimeHomeB;
 }
 
 
@@ -124,14 +134,14 @@ float getRelativePosC() {
 
 
 float getAbsoluteTargetA(float relativeTarget) {
-  ensureShaftCoordinateOffset('A');
-  return homeAOffset + relativeTarget;
+  if (!runtimeHomeAReady) getRelativePosA();
+  return runtimeHomeA + relativeTarget;
 }
 
 
 float getAbsoluteTargetB(float relativeTarget) {
-  ensureShaftCoordinateOffset('B');
-  return homeBOffset + relativeTarget;
+  if (!runtimeHomeBReady) getRelativePosB();
+  return runtimeHomeB + relativeTarget;
 }
 
 
@@ -153,6 +163,29 @@ String getCalibrationInfo() {
 }
 
 
+String rebaseRuntimeTurn(char axis, int turns) {
+  if (axis != 'A' && axis != 'B') return "ERR, C_AXIS_REMOVED";
+  if (turns != 1 && turns != -1) return "ERR, REBASE_REQUIRES_PLUS_OR_MINUS_ONE";
+  const bool isA = axis == 'A';
+  if (!(isA ? sleepA : sleepB)) return "ERR, REBASE_REQUIRES_SLEEP";
+  BLDCMotor& motor = isA ? motorA : motorB;
+  if (motor.sensor_direction == Direction::UNKNOWN) return "ERR, ZERO_SENSOR_DIRECTION_UNKNOWN";
+  const float position = isA ? getRelativePosA() : getRelativePosB();
+  const float shifted = position + turns * _2PI;
+  const float lower = isA ? aMinPos : B_MIN_POS;
+  const float upper = isA ? aMaxPos : B_MAX_POS;
+  if (shifted < lower || shifted > upper) return "ERR, REBASE_POSITION_OUT_OF_RANGE";
+  float& runtimeHome = isA ? runtimeHomeA : runtimeHomeB;
+  float& target = isA ? targetPosA : targetPosB;
+  runtimeHome -= turns * _2PI;
+  target = zerohero::boundedPosition(target + turns * _2PI, lower, upper);
+  motor.target = runtimeHome + target;
+  motor.PID_angle.reset();
+  motor.PID_velocity.reset();
+  // No flash write or motor enable: only this boot's coordinate branch changes.
+  return String("OK, REBASE") + axis + ", position=" + String(shifted, 6);
+}
+
 String setCurrentPositionAsZero(char axis) {
   if (axis == 'C') return "ERR, C_AXIS_REMOVED";
   if ((axis == 'A' && motorA.sensor_direction == Direction::UNKNOWN) ||
@@ -166,18 +199,22 @@ String setCurrentPositionAsZero(char axis) {
 
   if (axis == 'A') {
     sensorA.update();
-    homeAOffset = motorA.shaftAngle();
+    runtimeHomeA = motorA.shaftAngle();
+    homeAOffset = zerohero::positive(runtimeHomeA);
+    runtimeHomeAReady = true;
     zeroCoordMask |= ZERO_COORD_A;
     targetPosA = 0.0f;
-    motorA.target = homeAOffset;
+    motorA.target = runtimeHomeA;
     motorA.PID_angle.reset();
     motorA.PID_velocity.reset();
   } else if (axis == 'B') {
     sensorB.update();
-    homeBOffset = motorB.shaftAngle();
+    runtimeHomeB = motorB.shaftAngle();
+    homeBOffset = zerohero::positive(runtimeHomeB);
+    runtimeHomeBReady = true;
     zeroCoordMask |= ZERO_COORD_B;
     targetPosB = 0.0f;
-    motorB.target = homeBOffset;
+    motorB.target = runtimeHomeB;
     motorB.PID_angle.reset();
     motorB.PID_velocity.reset();
   } else if (axis == 'C') {
@@ -190,15 +227,19 @@ String setCurrentPositionAsZero(char axis) {
     motorC.PID_velocity.reset();
   } else {
     sensorA.update();
-    homeAOffset = motorA.shaftAngle();
+    runtimeHomeA = motorA.shaftAngle();
+    homeAOffset = zerohero::positive(runtimeHomeA);
+    runtimeHomeAReady = true;
     sensorB.update();
-    homeBOffset = motorB.shaftAngle();
+    runtimeHomeB = motorB.shaftAngle();
+    homeBOffset = zerohero::positive(runtimeHomeB);
+    runtimeHomeBReady = true;
     targetPosA = 0.0f;
     targetPosB = 0.0f;
     targetPosC = 0.0f;
 
-    motorA.target = homeAOffset;
-    motorB.target = homeBOffset;
+    motorA.target = runtimeHomeA;
+    motorB.target = runtimeHomeB;
 
     motorA.PID_angle.reset();
     motorA.PID_velocity.reset();
